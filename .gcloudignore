@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+.env
+*.log
+logs/
+docs/
+scripts/
+uploads/
+data/
+*.md
+.cursor/

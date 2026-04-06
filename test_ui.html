@@ -1,0 +1,2081 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Healoncal API Test UI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .endpoint-section {
+            margin-bottom: 40px;
+            border: 1px solid #e1e5e9;
+            border-radius: 10px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .endpoint-section:hover {
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .endpoint-header {
+            background: #f8f9fa;
+            padding: 20px;
+            border-bottom: 1px solid #e1e5e9;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .endpoint-header h3 {
+            color: #2c3e50;
+            font-size: 1.3rem;
+            margin-bottom: 5px;
+        }
+
+        .endpoint-header .method {
+            background: #28a745;
+            color: white;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+
+        .endpoint-header .method.post {
+            background: #007bff;
+        }
+
+        .endpoint-header .method.get {
+            background: #28a745;
+        }
+
+        .endpoint-content {
+            padding: 20px;
+            display: none;
+        }
+
+        .endpoint-content.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .form-group input,
+        .form-group textarea,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus,
+        .form-group textarea:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #4facfe;
+        }
+
+        .file-input-wrapper {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+
+        .file-input {
+            position: absolute;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+
+        .file-input-label {
+            display: block;
+            padding: 12px;
+            border: 2px dashed #e1e5e9;
+            border-radius: 8px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .file-input-label:hover {
+            border-color: #4facfe;
+            background: #f8f9ff;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            margin-right: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(79, 172, 254, 0.4);
+        }
+
+        .btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .response-area {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #4facfe;
+        }
+
+        .response-area h4 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+        }
+
+        .response-content {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #e1e5e9;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        
+        .response-content.heatmap-content {
+            font-family: Arial, sans-serif;
+            white-space: normal;
+            font-size: 14px;
+        }
+        
+        .backend-info {
+            margin-top: 10px;
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+        }
+        
+        .backend-status {
+            color: #4CAF50;
+            font-weight: 600;
+        }
+        
+        .backend-url {
+            color: #E3F2FD;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        
+        .heatmap-display {
+            font-family: Arial, sans-serif;
+        }
+        
+        .image-angle {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: #f9f9f9;
+        }
+        
+        .heatmap-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin: 10px 0;
+        }
+        
+        .heatmap-item {
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            padding: 10px;
+            background: white;
+            text-align: center;
+            min-width: 200px;
+        }
+        
+        .heatmap-item h6 {
+            margin: 0 0 5px 0;
+            color: #333;
+            font-size: 14px;
+        }
+        
+        .heatmap-item p {
+            margin: 2px 0;
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .combined-heatmap {
+            text-align: center;
+            margin: 10px 0;
+        }
+        
+        .heatmap-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        .heatmap-stats {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 10px;
+        }
+        
+        .stat-item {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+        }
+        
+        .angle-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e9ecef;
+        }
+        
+        .angle-count {
+            background: #f8f9fa;
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+            color: #6c757d;
+        }
+        
+        .combined-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+        }
+        
+        .individual-section {
+            margin-top: 20px;
+        }
+        
+        .heatmap-item {
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 15px;
+            background: white;
+            text-align: center;
+            min-width: 220px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: transform 0.2s ease;
+        }
+        
+        .heatmap-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        
+        .heatmap-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .heatmap-header h6 {
+            margin: 0;
+            color: #333;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        
+        .confidence-badge {
+            background: #28a745;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+        
+        .heatmap-info {
+            margin: 10px 0;
+            text-align: left;
+        }
+        
+        .heatmap-info p {
+            margin: 3px 0;
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .heatmap-image {
+            margin-top: 10px;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+
+        .status-success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-loading {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .toggle-icon {
+            transition: transform 0.3s ease;
+        }
+
+        .toggle-icon.rotated {
+            transform: rotate(180deg);
+        }
+
+        .image-preview {
+            max-width: 200px;
+            max-height: 200px;
+            margin-top: 10px;
+            border-radius: 8px;
+            border: 2px solid #e1e5e9;
+        }
+        
+        .captured-images-gallery {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-top: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .captured-image-item {
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            padding: 10px;
+            text-align: center;
+            background: #f8f9fa;
+        }
+        
+        .captured-image-item.captured {
+            border-color: #4CAF50;
+            background: #e8f5e9;
+        }
+        
+        .captured-image-item img {
+            max-width: 100%;
+            max-height: 150px;
+            border-radius: 5px;
+            margin-bottom: 5px;
+        }
+        
+        .captured-image-item .angle-label {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+        
+        .captured-image-item .status {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .captured-image-item.captured .status {
+            color: #4CAF50;
+            font-weight: 600;
+        }
+
+        .endpoint-info {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border-left: 4px solid #2196f3;
+        }
+
+        .endpoint-info h4 {
+            color: #1976d2;
+            margin-bottom: 10px;
+        }
+
+        .endpoint-info p {
+            color: #424242;
+            margin-bottom: 5px;
+        }
+
+        .base-url {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            margin-bottom: 20px;
+            text-align: center;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+        
+        .url-selector {
+            margin-top: 10px;
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+        }
+        
+        .url-selector select {
+            padding: 5px 10px;
+            border-radius: 5px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        
+        .url-selector select option {
+            background: #2c3e50;
+            color: white;
+        }
+        
+        .test-section {
+            background: #f8f9fa;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .test-section h3 {
+            color: #495057;
+            margin-bottom: 15px;
+        }
+        
+        .test-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
+        
+        .test-btn {
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform 0.2s;
+        }
+        
+        .test-btn:hover {
+            transform: translateY(-2px);
+        }
+        
+        .test-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔬 Healoncal API Test UI</h1>
+            <p>Medical-Grade Skin Analysis API Testing Interface</p>
+            <div class="url-selector">
+                <span class="backend-status">🌐 Backend:</span>
+                <select id="urlSelector" onchange="switchBackend()">
+                    <option value="local">Local (http://localhost:8000)</option>
+                    <option value="deployment">Deployment (Production)</option>
+                </select>
+                <span class="backend-url" id="currentBackendUrl">http://localhost:8000/api/healoncal</span>
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="base-url" id="baseUrlDisplay">
+                🌐 Base URL: http://localhost:8000/api/healoncal
+            </div>
+            
+            <!-- Test Sections -->
+            <div class="test-section">
+                <h3>🧪 Testing & Performance</h3>
+                <div class="test-buttons">
+                    <button class="test-btn" onclick="runHealthCheck()">Health Check</button>
+                    <button class="test-btn" onclick="runMetricsTest()">Get Metrics</button>
+                    <button class="test-btn" onclick="runPerformanceTest()">Performance Test</button>
+                    <button class="test-btn" onclick="runFullBenchmark()">Full Benchmark</button>
+                </div>
+                <div class="response-area" id="test-results" style="display: none;">
+                    <div class="response-status" id="test-status"></div>
+                    <div class="response-content" id="test-content"></div>
+                </div>
+            </div>
+
+            <!-- Health Check Endpoint -->
+            <div class="endpoint-section">
+                <div class="endpoint-header" onclick="toggleSection('health')">
+                    <div>
+                        <h3>Health Check</h3>
+                        <p>Check if the Healoncal service is running</p>
+                    </div>
+                    <div>
+                        <span class="method get">GET</span>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                </div>
+                <div class="endpoint-content" id="health">
+                    <div class="endpoint-info">
+                        <h4>Endpoint Information</h4>
+                        <p><strong>URL:</strong> /health</p>
+                        <p><strong>Method:</strong> GET</p>
+                        <p><strong>Description:</strong> Check service health and database connectivity</p>
+                    </div>
+                    <button class="btn" onclick="testHealthCheck()">Test Health Check</button>
+                    <div class="response-area" id="health-response" style="display: none;">
+                        <h4>Response <span class="status-indicator" id="health-status"></span></h4>
+                        <div class="response-content" id="health-content"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Capture Image Endpoint -->
+            <div class="endpoint-section">
+                <div class="endpoint-header" onclick="toggleSection('capture')">
+                    <div>
+                        <h3>Capture Image</h3>
+                        <p>Capture an image for analysis (front, left, right)</p>
+                    </div>
+                    <div>
+                        <span class="method post">POST</span>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                </div>
+                <div class="endpoint-content" id="capture">
+                    <div class="endpoint-info">
+                        <h4>Endpoint Information</h4>
+                        <p><strong>URL:</strong> /capture</p>
+                        <p><strong>Method:</strong> POST</p>
+                        <p><strong>Description:</strong> Capture image for analysis. Requires 3 images (front, left, right)</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="capture-user-id">User ID:</label>
+                        <input type="text" id="capture-user-id" placeholder="Enter user ID" value="test-user-123">
+                    </div>
+                    <div class="form-group">
+                        <label for="capture-angle">Angle:</label>
+                        <select id="capture-angle">
+                            <option value="front">Front</option>
+                            <option value="left">Left</option>
+                            <option value="right">Right</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="capture-image">Image File:</label>
+                        <div class="file-input-wrapper">
+                            <input type="file" id="capture-image" class="file-input" accept="image/*" onchange="previewImage('capture-image', 'capture-preview')">
+                            <label for="capture-image" class="file-input-label">
+                                📷 Click to select image or drag and drop
+                            </label>
+                        </div>
+                        <img id="capture-preview" class="image-preview" style="display: none;">
+                    </div>
+                    
+                    <!-- Captured Images Gallery -->
+                    <div class="form-group">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <label style="margin: 0;">📸 Captured Images:</label>
+                            <button class="btn" onclick="clearSession()" style="background: #f44336; padding: 5px 15px; font-size: 12px;">🗑️ Clear Session</button>
+                        </div>
+                        <div class="captured-images-gallery" id="captured-images-gallery">
+                            <div class="captured-image-item" id="gallery-front">
+                                <div class="angle-label">Front</div>
+                                <div class="status">Not captured</div>
+                                <img id="gallery-front-img" style="display: none;">
+                            </div>
+                            <div class="captured-image-item" id="gallery-left">
+                                <div class="angle-label">Left</div>
+                                <div class="status">Not captured</div>
+                                <img id="gallery-left-img" style="display: none;">
+                            </div>
+                            <div class="captured-image-item" id="gallery-right">
+                                <div class="angle-label">Right</div>
+                                <div class="status">Not captured</div>
+                                <img id="gallery-right-img" style="display: none;">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button class="btn" onclick="testCaptureImage()">Capture Image</button>
+                    <div class="response-area" id="capture-response" style="display: none;">
+                        <h4>Response <span class="status-indicator" id="capture-status"></span></h4>
+                        <div class="response-content" id="capture-content"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Analyze Endpoint -->
+            <div class="endpoint-section">
+                <div class="endpoint-header" onclick="toggleSection('analyze')">
+                    <div>
+                        <h3>Analyze</h3>
+                        <p>Start Healoncal analysis for a user</p>
+                    </div>
+                    <div>
+                        <span class="method post">POST</span>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                </div>
+                <div class="endpoint-content" id="analyze">
+                    <div class="endpoint-info">
+                        <h4>Endpoint Information</h4>
+                        <p><strong>URL:</strong> /analyze</p>
+                        <p><strong>Method:</strong> POST</p>
+                        <p><strong>Description:</strong> Start Healoncal analysis only. Returns session_id + processed_images (use Get Results / Complete Results after for full data).</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="analyze-user-id">User ID:</label>
+                        <input type="text" id="analyze-user-id" placeholder="Enter user ID" value="test-user-123">
+                    </div>
+                    <button class="btn" onclick="testAnalyze()">Analyze (single response)</button>
+                    <div class="response-area" id="analyze-response" style="display: none;">
+                        <h4>Response <span class="status-indicator" id="analyze-status"></span></h4>
+                        <div class="response-content" id="analyze-content"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Submit and Analyze (single call: 3 images + full results) -->
+            <div class="endpoint-section">
+                <div class="endpoint-header" onclick="toggleSection('submit-and-analyze')">
+                    <div>
+                        <h3>Submit and Analyze (Single Call)</h3>
+                        <p>Send 3 images + user ID in one request → get full analysis + heatmaps + recommendations</p>
+                    </div>
+                    <div>
+                        <span class="method post">POST</span>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                </div>
+                <div class="endpoint-content" id="submit-and-analyze">
+                    <div class="endpoint-info">
+                        <h4>Endpoint Information</h4>
+                        <p><strong>URL:</strong> /submit-and-analyze</p>
+                        <p><strong>Method:</strong> POST</p>
+                        <p><strong>Description:</strong> One API call: upload front, left, and right images with user_id. Backend captures all 3, runs analysis, and returns complete results (no separate capture or analyze calls).</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="submit-analyze-user-id">User ID:</label>
+                        <input type="text" id="submit-analyze-user-id" placeholder="Enter user ID" value="test-user-123">
+                    </div>
+                    <div class="form-group">
+                        <label style="display: block; margin-bottom: 6px;">Front image:</label>
+                        <div class="file-input-wrapper">
+                            <input type="file" id="submit-analyze-front" class="file-input" accept="image/*" onchange="previewImage('submit-analyze-front', 'submit-analyze-front-preview')">
+                            <label for="submit-analyze-front" class="file-input-label">📷 Front: click to select image</label>
+                        </div>
+                        <img id="submit-analyze-front-preview" class="image-preview" style="display: none;" alt="Front preview">
+                    </div>
+                    <div class="form-group">
+                        <label style="display: block; margin-bottom: 6px;">Left image:</label>
+                        <div class="file-input-wrapper">
+                            <input type="file" id="submit-analyze-left" class="file-input" accept="image/*" onchange="previewImage('submit-analyze-left', 'submit-analyze-left-preview')">
+                            <label for="submit-analyze-left" class="file-input-label">📷 Left: click to select image</label>
+                        </div>
+                        <img id="submit-analyze-left-preview" class="image-preview" style="display: none;" alt="Left preview">
+                    </div>
+                    <div class="form-group">
+                        <label style="display: block; margin-bottom: 6px;">Right image:</label>
+                        <div class="file-input-wrapper">
+                            <input type="file" id="submit-analyze-right" class="file-input" accept="image/*" onchange="previewImage('submit-analyze-right', 'submit-analyze-right-preview')">
+                            <label for="submit-analyze-right" class="file-input-label">📷 Right: click to select image</label>
+                        </div>
+                        <img id="submit-analyze-right-preview" class="image-preview" style="display: none;" alt="Right preview">
+                    </div>
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="submit-analyze-include-recommendations" checked>
+                            Include AI recommendations
+                        </label>
+                    </div>
+                    <button class="btn" onclick="testSubmitAndAnalyze()">Submit and Analyze</button>
+                    <div class="response-area" id="submit-and-analyze-response" style="display: none;">
+                        <h4>Response <span class="status-indicator" id="submit-and-analyze-status"></span></h4>
+                        <div class="response-content" id="submit-and-analyze-content"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Complete Analysis (analyze + combined results in one call) -->
+            <div class="endpoint-section">
+                <div class="endpoint-header" onclick="toggleSection('complete-analysis')">
+                    <div>
+                        <h3>Complete Analysis</h3>
+                        <p>Run analysis and get full combined results in one request</p>
+                    </div>
+                    <div>
+                        <span class="method post">POST</span>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                </div>
+                <div class="endpoint-content" id="complete-analysis">
+                    <div class="endpoint-info">
+                        <h4>Endpoint Information</h4>
+                        <p><strong>URL:</strong> /complete-analysis</p>
+                        <p><strong>Method:</strong> POST</p>
+                        <p><strong>Description:</strong> Capture 3 images → click this once. Runs analysis then returns results + heatmaps + recommendations in a single response (no separate analyze then complete-results).</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="complete-analysis-user-id">User ID:</label>
+                        <input type="text" id="complete-analysis-user-id" placeholder="Same as Capture / Analyze" value="test-user-123">
+                    </div>
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="complete-analysis-include-recommendations" checked>
+                            Include AI recommendations (may take a few extra seconds)
+                        </label>
+                    </div>
+                    <button class="btn" onclick="testCompleteAnalysis()">Run Complete Analysis</button>
+                    <div class="response-area" id="complete-analysis-response" style="display: none;">
+                        <h4>Response <span class="status-indicator" id="complete-analysis-status"></span></h4>
+                        <div class="response-content" id="complete-analysis-content"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Get Results Endpoint -->
+            <div class="endpoint-section">
+                <div class="endpoint-header" onclick="toggleSection('results')">
+                    <div>
+                        <h3>Get Results</h3>
+                        <p>Get Healoncal analysis results</p>
+                    </div>
+                    <div>
+                        <span class="method get">GET</span>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                </div>
+                <div class="endpoint-content" id="results">
+                    <div class="endpoint-info">
+                        <h4>Endpoint Information</h4>
+                        <p><strong>URL:</strong> /results/{session_id}</p>
+                        <p><strong>Method:</strong> GET</p>
+                        <p><strong>Description:</strong> Get Healoncal analysis results for a session</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="results-session-id">Session ID:</label>
+                        <input type="text" id="results-session-id" placeholder="Enter session ID">
+                    </div>
+                    <button class="btn" onclick="testGetResults()">Get Results</button>
+                    <div class="response-area" id="results-response" style="display: none;">
+                        <h4>Response <span class="status-indicator" id="results-status"></span></h4>
+                        <div class="response-content" id="results-content"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Complete Results (combined: results + heatmaps + recommendations) -->
+            <div class="endpoint-section">
+                <div class="endpoint-header" onclick="toggleSection('complete-results')">
+                    <div>
+                        <h3>Complete Results (One Call)</h3>
+                        <p>Get results + heatmaps + recommendations in a single request</p>
+                    </div>
+                    <div>
+                        <span class="method get">GET</span>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                </div>
+                <div class="endpoint-content" id="complete-results">
+                    <div class="endpoint-info">
+                        <h4>Endpoint Information</h4>
+                        <p><strong>URL:</strong> /complete-results/{session_id}</p>
+                        <p><strong>Method:</strong> GET</p>
+                        <p><strong>Description:</strong> Returns results, heatmaps, and AI recommendations in one response so the frontend can render the full UI with a single call. Use after capture + analyze.</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="complete-results-session-id">Session ID:</label>
+                        <input type="text" id="complete-results-session-id" placeholder="Enter session ID (or use current session)">
+                    </div>
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="complete-results-include-recommendations" checked>
+                            Include AI recommendations (may take a few extra seconds)
+                        </label>
+                    </div>
+                    <button class="btn" onclick="testGetCompleteResults()">Get Complete Results</button>
+                    <div class="response-area" id="complete-results-response" style="display: none;">
+                        <h4>Response <span class="status-indicator" id="complete-results-status"></span></h4>
+                        <div class="response-content" id="complete-results-content"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat on Report (RAG: max 5 prompts per session) -->
+            <div class="endpoint-section">
+                <div class="endpoint-header" onclick="toggleSection('chat-on-report')">
+                    <div>
+                        <h3>Chat on Report</h3>
+                        <p>Ask questions about your analysis report (max 5 questions per session)</p>
+                    </div>
+                    <div>
+                        <span class="method post">POST</span>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                </div>
+                <div class="endpoint-content" id="chat-on-report">
+                    <div class="endpoint-info">
+                        <h4>Endpoint Information</h4>
+                        <p><strong>URL:</strong> /chat-on-report</p>
+                        <p><strong>Method:</strong> POST</p>
+                        <p><strong>Description:</strong> After you have a completed analysis, ask up to 5 questions about your report. Answers are generated from your report only (RAG).</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="chat-on-report-session-id">Session ID:</label>
+                        <input type="text" id="chat-on-report-session-id" placeholder="Enter session ID (or use current session)">
+                    </div>
+                    <div class="form-group">
+                        <label for="chat-on-report-message">Your question:</label>
+                        <textarea id="chat-on-report-message" rows="2" placeholder="e.g. What does my skin type mean? What should I focus on?"></textarea>
+                    </div>
+                    <div class="form-group" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                        <button class="btn" onclick="sendChatOnReport()">Send</button>
+                        <span id="chat-on-report-counter" style="color: #666; font-size: 14px;">0 of 5 questions used</span>
+                    </div>
+                    <div id="chat-on-report-messages" style="margin-top: 16px; max-height: 400px; overflow-y: auto; border: 1px solid #e1e5e9; border-radius: 8px; padding: 12px; background: #f8f9fa;"></div>
+                </div>
+            </div>
+
+            <!-- Get Latest Session Endpoint -->
+            <div class="endpoint-section">
+                <div class="endpoint-header" onclick="toggleSection('session')">
+                    <div>
+                        <h3>Get Latest Session</h3>
+                        <p>Get the latest session for a user</p>
+                    </div>
+                    <div>
+                        <span class="method get">GET</span>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                </div>
+                <div class="endpoint-content" id="session">
+                    <div class="endpoint-info">
+                        <h4>Endpoint Information</h4>
+                        <p><strong>URL:</strong> /session/{user_id}/latest</p>
+                        <p><strong>Method:</strong> GET</p>
+                        <p><strong>Description:</strong> Get the latest analysis session for a user</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="session-user-id">User ID:</label>
+                        <input type="text" id="session-user-id" placeholder="Enter user ID" value="test-user-123">
+                    </div>
+                    <button class="btn" onclick="testGetLatestSession()">Get Latest Session</button>
+                    <div class="response-area" id="session-response" style="display: none;">
+                        <h4>Response <span class="status-indicator" id="session-status"></span></h4>
+                        <div class="response-content" id="session-content"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Get Heatmaps Endpoint -->
+            <div class="endpoint-section">
+                <div class="endpoint-header" onclick="toggleSection('heatmaps')">
+                    <div>
+                        <h3>Get Heatmaps</h3>
+                        <p>Get heat map visualizations for a session</p>
+                    </div>
+                    <div>
+                        <span class="method get">GET</span>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                </div>
+                <div class="endpoint-content" id="heatmaps">
+                    <div class="endpoint-info">
+                        <h4>Endpoint Information</h4>
+                        <p><strong>URL:</strong> /heatmaps/{session_id}</p>
+                        <p><strong>Method:</strong> GET</p>
+                        <p><strong>Description:</strong> Get ALL heat map visualizations for a session - automatically fetches all images (front, left, right) with individual and combined heatmaps</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="heatmaps-session-id">Session ID:</label>
+                        <input type="text" id="heatmaps-session-id" placeholder="Enter session ID">
+                    </div>
+                    <button class="btn" onclick="testGetHeatmaps()">Get Heatmaps</button>
+                    <div class="response-area" id="heatmaps-response" style="display: none;">
+                        <h4>Response <span class="status-indicator" id="heatmaps-status"></span></h4>
+                        <div class="response-content" id="heatmaps-content"></div>
+                    </div>
+                </div>
+            </div>
+
+
+            <!-- Get Recommendations Endpoint -->
+            <div class="endpoint-section">
+                <div class="endpoint-header" onclick="toggleSection('recommendations')">
+                    <div>
+                        <h3>Get Recommendations</h3>
+                        <p>Get AI-powered product recommendations</p>
+                    </div>
+                    <div>
+                        <span class="method post">POST</span>
+                        <span class="toggle-icon">▼</span>
+                    </div>
+                </div>
+                <div class="endpoint-content" id="recommendations">
+                    <div class="endpoint-info">
+                        <h4>Endpoint Information</h4>
+                        <p><strong>URL:</strong> /recommendations</p>
+                        <p><strong>Method:</strong> POST</p>
+                        <p><strong>Description:</strong> Get AI-powered product recommendations based on analysis results</p>
+                    </div>
+                    <div class="form-group">
+                        <label for="recommendations-session-id">Session ID:</label>
+                        <input type="text" id="recommendations-session-id" placeholder="Enter session ID">
+                    </div>
+                    <div class="form-group">
+                        <label for="user-preferences">User Preferences (JSON):</label>
+                        <textarea id="user-preferences" placeholder='{"skin_type": "oily", "budget": "medium"}' rows="3"></textarea>
+                    </div>
+                    <button class="btn" onclick="testGetRecommendations()">Get Recommendations</button>
+                    <div class="response-area" id="recommendations-response" style="display: none;">
+                        <h4>Response <span class="status-indicator" id="recommendations-status"></span></h4>
+                        <div class="response-content" id="recommendations-content"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // URL Configuration - Default to Local
+        const URLS = {
+            local: 'http://localhost:8000/api/healoncal',
+            deployment: 'https://healoncal-api-232777865515.us-central1.run.app/api/healoncal'
+        };
+        
+        let BASE_URL = URLS.local; // Default to local
+        
+        // Switch backend URL
+        function switchBackend() {
+            const selector = document.getElementById('urlSelector');
+            const selected = selector.value;
+            BASE_URL = URLS[selected];
+            
+            // Update display
+            document.getElementById('currentBackendUrl').textContent = BASE_URL;
+            document.getElementById('baseUrlDisplay').textContent = `🌐 Base URL: ${BASE_URL}`;
+            
+            console.log(`Switched to: ${selected === 'local' ? 'Local' : 'Deployment'} - ${BASE_URL}`);
+        }
+        
+        // Health Check Test
+        async function runHealthCheck() {
+            const button = event.target;
+            button.disabled = true;
+            button.textContent = 'Checking...';
+            
+            try {
+                const response = await fetch(`${BASE_URL}/health`);
+                const data = await response.json();
+                showTestResponse('success', 'Health Check', JSON.stringify(data, null, 2));
+            } catch (error) {
+                showTestResponse('error', 'Health Check Failed', `Error: ${error.message}`);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Health Check';
+            }
+        }
+        
+        // Metrics Test
+        async function runMetricsTest() {
+            const button = event.target;
+            button.disabled = true;
+            button.textContent = 'Fetching Metrics...';
+            
+            try {
+                const response = await fetch(`${BASE_URL}/metrics`);
+                const data = await response.json();
+                showTestResponse('success', 'Metrics', JSON.stringify(data, null, 2));
+            } catch (error) {
+                showTestResponse('error', 'Metrics Fetch Failed', `Error: ${error.message}`);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Get Metrics';
+            }
+        }
+        
+        // Performance Test
+        async function runPerformanceTest() {
+            const button = event.target;
+            button.disabled = true;
+            button.textContent = 'Running Performance Test...';
+            
+            try {
+                const results = [];
+                
+                // Test health endpoint
+                const start1 = performance.now();
+                const healthRes = await fetch(`${BASE_URL}/health`);
+                const healthTime = performance.now() - start1;
+                results.push({ endpoint: 'Health', duration: `${healthTime.toFixed(2)}ms`, status: healthRes.status });
+                
+                // Test metrics endpoint
+                const start2 = performance.now();
+                const metricsRes = await fetch(`${BASE_URL}/metrics`);
+                const metricsTime = performance.now() - start2;
+                results.push({ endpoint: 'Metrics', duration: `${metricsTime.toFixed(2)}ms`, status: metricsRes.status });
+                
+                const summary = {
+                    timestamp: new Date().toISOString(),
+                    backend: document.getElementById('urlSelector').value,
+                    base_url: BASE_URL,
+                    results: results,
+                    average_time: `${((healthTime + metricsTime) / 2).toFixed(2)}ms`
+                };
+                
+                showTestResponse('success', 'Performance Test Results', JSON.stringify(summary, null, 2));
+            } catch (error) {
+                showTestResponse('error', 'Performance Test Failed', `Error: ${error.message}`);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Performance Test';
+            }
+        }
+        
+        // Full Benchmark Test
+        async function runFullBenchmark() {
+            const button = event.target;
+            button.disabled = true;
+            button.textContent = 'Running Benchmark...';
+            
+            try {
+                const benchmarkResults = {
+                    timestamp: new Date().toISOString(),
+                    backend: document.getElementById('urlSelector').value,
+                    base_url: BASE_URL,
+                    tests: []
+                };
+                
+                // Test 1: Health Check (5 iterations)
+                const healthTests = [];
+                for (let i = 0; i < 5; i++) {
+                    const start = performance.now();
+                    const res = await fetch(`${BASE_URL}/health`);
+                    const duration = performance.now() - start;
+                    healthTests.push({ iteration: i + 1, duration: `${duration.toFixed(2)}ms`, status: res.status });
+                    await new Promise(resolve => setTimeout(resolve, 100)); // Small delay
+                }
+                benchmarkResults.tests.push({
+                    endpoint: 'Health Check',
+                    iterations: 5,
+                    results: healthTests,
+                    avg_duration: `${(healthTests.reduce((sum, r) => sum + parseFloat(r.duration), 0) / 5).toFixed(2)}ms`
+                });
+                
+                // Test 2: Metrics (3 iterations)
+                const metricsTests = [];
+                for (let i = 0; i < 3; i++) {
+                    const start = performance.now();
+                    const res = await fetch(`${BASE_URL}/metrics`);
+                    const duration = performance.now() - start;
+                    metricsTests.push({ iteration: i + 1, duration: `${duration.toFixed(2)}ms`, status: res.status });
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+                benchmarkResults.tests.push({
+                    endpoint: 'Metrics',
+                    iterations: 3,
+                    results: metricsTests,
+                    avg_duration: `${(metricsTests.reduce((sum, r) => sum + parseFloat(r.duration), 0) / 3).toFixed(2)}ms`
+                });
+                
+                // Calculate summary
+                const allDurations = [...healthTests, ...metricsTests].map(r => parseFloat(r.duration));
+                benchmarkResults.summary = {
+                    total_tests: allDurations.length,
+                    avg_duration: `${(allDurations.reduce((a, b) => a + b, 0) / allDurations.length).toFixed(2)}ms`,
+                    min_duration: `${Math.min(...allDurations).toFixed(2)}ms`,
+                    max_duration: `${Math.max(...allDurations).toFixed(2)}ms`
+                };
+                
+                showTestResponse('success', 'Benchmark Results', JSON.stringify(benchmarkResults, null, 2));
+            } catch (error) {
+                showTestResponse('error', 'Benchmark Failed', `Error: ${error.message}`);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Full Benchmark';
+            }
+        }
+        
+        // Show test response
+        function showTestResponse(status, title, content) {
+            const responseArea = document.getElementById('test-results');
+            const statusIndicator = document.getElementById('test-status');
+            const contentArea = document.getElementById('test-content');
+            
+            responseArea.style.display = 'block';
+            statusIndicator.textContent = `${status === 'success' ? '✅' : '❌'} ${title}`;
+            statusIndicator.className = `response-status ${status}`;
+            contentArea.textContent = content;
+            contentArea.style.maxHeight = '500px';
+            contentArea.style.overflow = 'auto';
+        }
+
+        // Toggle section visibility
+        function toggleSection(sectionId) {
+            const content = document.getElementById(sectionId);
+            const icon = content.previousElementSibling.querySelector('.toggle-icon');
+            
+            if (content.classList.contains('active')) {
+                content.classList.remove('active');
+                icon.classList.remove('rotated');
+            } else {
+                content.classList.add('active');
+                icon.classList.add('rotated');
+            }
+        }
+
+        // Preview uploaded image
+        function previewImage(inputId, previewId) {
+            const input = document.getElementById(inputId);
+            const preview = document.getElementById(previewId);
+            
+            if (input.files && input.files[0]) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    preview.src = e.target.result;
+                    preview.style.display = 'block';
+                };
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+
+        // Show response
+        function showResponse(endpointId, status, content) {
+            const responseArea = document.getElementById(`${endpointId}-response`);
+            const statusIndicator = document.getElementById(`${endpointId}-status`);
+            const contentArea = document.getElementById(`${endpointId}-content`);
+            
+            responseArea.style.display = 'block';
+            statusIndicator.textContent = status;
+            statusIndicator.className = `status-indicator status-${status.toLowerCase()}`;
+            contentArea.textContent = content;
+        }
+
+        // Test Health Check
+        async function testHealthCheck() {
+            const button = event.target;
+            button.disabled = true;
+            button.textContent = 'Testing...';
+            
+            try {
+                const response = await fetch(`${BASE_URL}/health`);
+                const data = await response.json();
+                
+                showResponse('health', response.ok ? 'success' : 'error', JSON.stringify(data, null, 2));
+            } catch (error) {
+                showResponse('health', 'error', `Error: ${error.message}`);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Test Health Check';
+            }
+        }
+
+        // Store captured images
+        let capturedImages = {
+            front: null,
+            left: null,
+            right: null
+        };
+        
+        // Track current session
+        let currentSessionId = null;
+        let currentUserId = null;
+        
+        // Update captured images gallery
+        function updateCapturedImagesGallery() {
+            const angles = ['front', 'left', 'right'];
+            angles.forEach(angle => {
+                const item = document.getElementById(`gallery-${angle}`);
+                const img = document.getElementById(`gallery-${angle}-img`);
+                const status = item.querySelector('.status');
+                
+                if (capturedImages[angle]) {
+                    item.classList.add('captured');
+                    img.src = capturedImages[angle];
+                    img.style.display = 'block';
+                    status.textContent = '✅ Captured';
+                    status.style.color = '#4CAF50';
+                } else {
+                    item.classList.remove('captured');
+                    img.style.display = 'none';
+                    status.textContent = 'Not captured';
+                    status.style.color = '#666';
+                }
+            });
+        }
+        
+        // Load session from localStorage (no image data persisted; gallery empty after refresh)
+        function loadCapturedImages() {
+            try {
+                const storedSessionId = localStorage.getItem('healoncal_current_session_id');
+                const storedUserId = localStorage.getItem('healoncal_current_user_id');
+                if (storedSessionId && storedUserId) {
+                    currentSessionId = storedSessionId;
+                    currentUserId = storedUserId;
+                    syncSessionIdToInputs();
+                    console.log(`Loaded session ${currentSessionId} for user ${currentUserId}`);
+                } else {
+                    currentSessionId = null;
+                    currentUserId = null;
+                    syncSessionIdToInputs();
+                }
+            } catch (e) {
+                console.error('Failed to load session:', e);
+                currentSessionId = null;
+                currentUserId = null;
+                syncSessionIdToInputs();
+            }
+        }
+        
+        // Sync current session ID to all session-id inputs
+        function syncSessionIdToInputs() {
+            const ids = ['results-session-id', 'heatmaps-session-id', 'recommendations-session-id', 'complete-results-session-id', 'chat-on-report-session-id'];
+            ids.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.value = currentSessionId || '';
+            });
+        }
+        
+        // Save session to localStorage (no image data; only session_id and user_id)
+        function saveCapturedImages() {
+            try {
+                if (currentSessionId) {
+                    localStorage.setItem('healoncal_current_session_id', currentSessionId);
+                }
+                if (currentUserId) {
+                    localStorage.setItem('healoncal_current_user_id', currentUserId);
+                }
+                syncSessionIdToInputs();
+            } catch (e) {
+                console.error('Failed to save session:', e);
+            }
+        }
+        
+        // Clear captured images and revoke blob URLs
+        function clearCapturedImages() {
+            ['front', 'left', 'right'].forEach(function(angle) {
+                if (capturedImages[angle]) {
+                    URL.revokeObjectURL(capturedImages[angle]);
+                }
+            });
+            capturedImages = {
+                front: null,
+                left: null,
+                right: null
+            };
+            currentSessionId = null;
+            currentUserId = null;
+            updateCapturedImagesGallery();
+            syncSessionIdToInputs();
+            localStorage.removeItem('healoncal_current_session_id');
+            localStorage.removeItem('healoncal_current_user_id');
+            var fileInput = document.getElementById('capture-image');
+            if (fileInput) {
+                fileInput.value = '';
+            }
+            var preview = document.getElementById('capture-preview');
+            if (preview) {
+                preview.style.display = 'none';
+            }
+        }
+        
+        // Clear entire session (images + responses)
+        function clearSession() {
+            if (confirm('Clear all captured images and session data? This cannot be undone.')) {
+                clearCapturedImages();
+                
+                // Clear all response areas
+                const responseAreas = document.querySelectorAll('.response-area');
+                responseAreas.forEach(area => {
+                    area.style.display = 'none';
+                });
+                
+                // Clear response content
+                const responseContents = document.querySelectorAll('.response-content');
+                responseContents.forEach(content => {
+                    content.textContent = '';
+                });
+                
+                // Clear status indicators
+                const statusIndicators = document.querySelectorAll('.status-indicator');
+                statusIndicators.forEach(indicator => {
+                    indicator.textContent = '';
+                    indicator.className = 'status-indicator';
+                });
+                
+                console.log('Session cleared');
+                alert('Session cleared successfully!');
+            }
+        }
+        
+        // Test Capture Image (multipart upload; gallery uses blob URLs)
+        async function testCaptureImage() {
+            const button = event.target;
+            const userId = document.getElementById('capture-user-id').value.trim();
+            const angle = document.getElementById('capture-angle').value;
+            const imageFile = document.getElementById('capture-image').files[0];
+            
+            if (!userId || !imageFile) {
+                alert('Please enter User ID and select an image file');
+                return;
+            }
+            
+            if (currentUserId && currentUserId !== userId) {
+                if (confirm('User ID changed from "' + currentUserId + '" to "' + userId + '". Clear previous session?')) {
+                    clearCapturedImages();
+                }
+            }
+            
+            button.disabled = true;
+            button.textContent = 'Capturing...';
+            
+            try {
+                var formData = new FormData();
+                formData.append('user_id', userId);
+                formData.append('angle', angle);
+                formData.append('file', imageFile);
+                
+                console.log('📤 Capture: multipart/form-data (file: ' + imageFile.name + ')');
+                console.log('📤 Request URL:', BASE_URL + '/capture');
+                
+                const response = await fetch(BASE_URL + '/capture', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                console.log('📥 Response Status:', response.status, response.statusText);
+                const data = await response.json();
+                console.log('📥 Response Data:', data);
+                
+                if (response.ok && data.success) {
+                    if (capturedImages[angle]) {
+                        URL.revokeObjectURL(capturedImages[angle]);
+                    }
+                    capturedImages[angle] = URL.createObjectURL(imageFile);
+                    updateCapturedImagesGallery();
+                    var newSessionId = data.session_id;
+                    if (!currentSessionId || currentSessionId !== newSessionId) {
+                        currentSessionId = newSessionId;
+                        currentUserId = userId;
+                    }
+                    saveCapturedImages();
+                    showResponse('capture', 'success', JSON.stringify(data, null, 2));
+                } else {
+                    if (capturedImages[angle]) {
+                        URL.revokeObjectURL(capturedImages[angle]);
+                    }
+                    capturedImages[angle] = null;
+                    updateCapturedImagesGallery();
+                    saveCapturedImages();
+                    showResponse('capture', 'error', JSON.stringify(data, null, 2));
+                }
+            } catch (error) {
+                if (capturedImages[angle]) {
+                    URL.revokeObjectURL(capturedImages[angle]);
+                }
+                capturedImages[angle] = null;
+                updateCapturedImagesGallery();
+                saveCapturedImages();
+                showResponse('capture', 'error', 'Error: ' + error.message);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Capture Image';
+            }
+        }
+
+        // Test Analyze
+        async function testAnalyze() {
+            const button = event.target;
+            const userId = document.getElementById('analyze-user-id').value.trim();
+            
+            if (!userId) {
+                alert('Please enter User ID');
+                return;
+            }
+            
+            button.disabled = true;
+            button.textContent = 'Analyzing...';
+            
+            // Show payload being sent
+            const payload = {
+                user_id: userId
+            };
+            console.log('📤 Analyze Request Payload:', payload);
+            console.log('📤 Request URL:', `${BASE_URL}/analyze`);
+            
+            try {
+                const response = await fetch(`${BASE_URL}/analyze`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload)
+                });
+                
+                console.log('📥 Response Status:', response.status, response.statusText);
+                
+                let data;
+                try {
+                    data = await response.json();
+                    console.log('📥 Response Data:', data);
+                } catch (e) {
+                    // If response is not JSON, get text
+                    const text = await response.text();
+                    console.error('📥 Response is not JSON:', text);
+                    data = { error: text, status: response.status };
+                }
+                
+                if (response.ok && data.success) {
+                    if (data.session_id) {
+                        currentSessionId = data.session_id;
+                        saveCapturedImages();
+                        syncSessionIdToInputs();
+                    }
+                    showResponse('analyze', 'success', JSON.stringify(data, null, 2));
+                } else {
+                    // Show detailed error information
+                    let errorMessage = `Request Payload:\n${JSON.stringify(payload, null, 2)}\n\n`;
+                    errorMessage += `Response Status: ${response.status}\n\n`;
+                    errorMessage += `Response Data:\n${JSON.stringify(data, null, 2)}`;
+                    
+                    // If we have detailed error info, format it nicely
+                    if (data.detail) {
+                        if (typeof data.detail === 'object') {
+                            errorMessage += `\n\nError Details:\n${JSON.stringify(data.detail, null, 2)}`;
+                        } else {
+                            errorMessage += `\n\nError: ${data.detail}`;
+                        }
+                    } else if (data.error) {
+                        errorMessage += `\n\nError: ${data.error}`;
+                    }
+                    
+                    showResponse('analyze', 'error', errorMessage);
+                }
+            } catch (error) {
+                const errorMsg = `Request Payload:\n${JSON.stringify(payload, null, 2)}\n\nError: ${error.message}\n\nMake sure:\n1. You have captured 3 images (front, left, right)\n2. Database is connected\n3. Images are accessible\n4. Server is running`;
+                showResponse('analyze', 'error', errorMsg);
+                console.error('❌ Analyze Error:', error);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Start Analysis';
+            }
+        }
+
+        // Test Get Results
+        async function testGetResults() {
+            const button = event.target;
+            const sessionId = document.getElementById('results-session-id').value;
+            
+            if (!sessionId) {
+                alert('Please enter Session ID');
+                return;
+            }
+            
+            button.disabled = true;
+            button.textContent = 'Loading...';
+            
+            try {
+                const response = await fetch(`${BASE_URL}/results/${sessionId}`);
+                const data = await response.json();
+                
+                showResponse('results', response.ok ? 'success' : 'error', JSON.stringify(data, null, 2));
+            } catch (error) {
+                showResponse('results', 'error', `Error: ${error.message}`);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Get Results';
+            }
+        }
+
+        function renderCombinedResponse(data, contentEl) {
+            const res = data.results || {};
+            const heatmaps = data.heatmaps || {};
+            const recs = data.recommendations || {};
+            const summary = (res.healoncal_results || {}).analysis_summary || {};
+            let html = '<div class="complete-results-display">';
+            if (data.analysis) {
+                html += '<div class="observations-box" style="background:#e0f7e0;border:1px solid #28a745;border-radius:8px;padding:12px;margin-bottom:12px;">';
+                html += '<h4 style="margin-bottom:8px;">✅ Analysis</h4>';
+                html += '<p>Processed images: ' + (data.analysis.processed_images != null ? data.analysis.processed_images : '—') + '. ' + escapeHtml(data.analysis.message || '') + '</p></div>';
+            }
+            html += '<div class="observations-box" style="background:#e8f4fd;border:1px solid #4facfe;border-radius:8px;padding:16px;margin-bottom:16px;">';
+            html += '<h4 style="margin-bottom:12px;">📋 Observations</h4>';
+            html += '<ul style="margin:0;padding-left:20px;line-height:1.8;">';
+            html += '<li><strong>Session ID:</strong> ' + escapeHtml(data.session_id) + '</li>';
+            html += '<li><strong>Analysis status:</strong> ' + escapeHtml(summary.analysis_status || (res.session_info && res.session_info.status) || '—') + '</li>';
+            html += '<li><strong>Total images:</strong> ' + (summary.total_images != null ? summary.total_images : '—') + '</li>';
+            html += '<li><strong>Heatmaps:</strong> ' + (heatmaps.total_heatmaps || 0) + ' total (' + ((heatmaps.angles_available || []).join(', ') || '—') + ')</li>';
+            html += '<li><strong>Recommendations:</strong> ' + (recs.success ? '✓ Included' : (recs.error ? '✗ ' + escapeHtml(recs.error) : '— Not requested')) + '</li>';
+            html += '</ul></div>';
+            html += '<div style="margin-bottom:16px;"><strong>Results summary</strong>: ';
+            const combined = (res.healoncal_results || {}).combined_analysis || {};
+            html += 'Skin type: ' + escapeHtml(combined.final_skin_type_classification || '\u2014') + ', Tone: ' + escapeHtml(combined.final_skin_tone_classification || '\u2014') + ', Accuracy: ' + (combined.overall_diagnostic_accuracy != null ? combined.overall_diagnostic_accuracy : '\u2014') + '%</div>';
+            if (heatmaps.images && (heatmaps.total_heatmaps || 0) > 0) {
+                html += '<div class="heatmap-section" style="margin-bottom:16px;"><h4>🗺️ Heatmaps</h4>';
+                for (const [angle, imageData] of Object.entries(heatmaps.images)) {
+                    if (!imageData.individual_heatmaps && !imageData.combined_heatmap) continue;
+                    const ind = (imageData.individual_heatmaps || []).length;
+                    const comb = imageData.combined_heatmap ? 1 : 0;
+                    html += '<div style="margin:8px 0;">';
+                    html += '<strong>' + escapeHtml(angle) + '</strong>: ' + ind + ' individual, ' + comb + ' combined';
+                    if (imageData.combined_heatmap && imageData.combined_heatmap.url) {
+                        html += ' <img src="' + escapeHtml(imageData.combined_heatmap.url) + '" alt="combined" style="max-width:120px;max-height:120px;border-radius:6px;margin-left:8px;vertical-align:middle;">';
+                    }
+                    html += '</div>';
+                }
+                html += '</div>';
+            }
+            if (recs.success && recs.recommendations) {
+                html += '<div class="recommendations-section" style="margin-bottom:16px;"><h4>💡 Recommendations</h4>';
+                html += '<pre style="background:#f8f9fa;padding:12px;border-radius:8px;overflow:auto;max-height:300px;">' + escapeHtml(JSON.stringify(recs.recommendations, null, 2)) + '</pre></div>';
+            }
+            html += '<details style="margin-top:12px;"><summary>Raw JSON response</summary>';
+            html += '<pre style="background:#f0f0f0;padding:12px;border-radius:8px;overflow:auto;max-height:400px;font-size:12px;">' + escapeHtml(JSON.stringify(data, null, 2)) + '</pre></details>';
+            html += '</div>';
+            contentEl.innerHTML = html;
+        }
+
+        // Test Get Complete Results (combined: results + heatmaps + recommendations)
+        async function testGetCompleteResults() {
+            const button = event.target;
+            let sessionId = document.getElementById('complete-results-session-id').value.trim();
+            if (!sessionId && currentSessionId) sessionId = currentSessionId;
+            if (!sessionId) {
+                alert('Please enter Session ID or capture + analyze first to use current session');
+                return;
+            }
+            const includeRecs = document.getElementById('complete-results-include-recommendations').checked;
+            button.disabled = true;
+            button.textContent = 'Loading...';
+            const responseArea = document.getElementById('complete-results-response');
+            const statusEl = document.getElementById('complete-results-status');
+            const contentEl = document.getElementById('complete-results-content');
+            responseArea.style.display = 'block';
+            try {
+                const url = `${BASE_URL}/complete-results/${encodeURIComponent(sessionId)}?include_recommendations=${includeRecs}`;
+                const response = await fetch(url);
+                const data = await response.json();
+                if (!response.ok) {
+                    statusEl.textContent = 'error';
+                    statusEl.className = 'status-indicator status-error';
+                    contentEl.innerHTML = '<pre>' + escapeHtml(JSON.stringify(data, null, 2)) + '</pre>';
+                    return;
+                }
+                statusEl.textContent = 'success';
+                statusEl.className = 'status-indicator status-success';
+                renderCombinedResponse(data, contentEl);
+            } catch (error) {
+                statusEl.textContent = 'error';
+                statusEl.className = 'status-indicator status-error';
+                contentEl.textContent = `Error: ${error.message}`;
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Get Complete Results';
+            }
+        }
+
+        // Test Complete Analysis (analyze + combined results in one call)
+        async function testCompleteAnalysis() {
+            const button = event.target;
+            const userId = document.getElementById('complete-analysis-user-id').value.trim();
+            if (!userId) {
+                alert('Please enter User ID');
+                return;
+            }
+            const includeRecs = document.getElementById('complete-analysis-include-recommendations').checked;
+            button.disabled = true;
+            button.textContent = 'Analyzing...';
+            const responseArea = document.getElementById('complete-analysis-response');
+            const statusEl = document.getElementById('complete-analysis-status');
+            const contentEl = document.getElementById('complete-analysis-content');
+            responseArea.style.display = 'block';
+            try {
+                const response = await fetch(`${BASE_URL}/complete-analysis`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: userId, include_recommendations: includeRecs })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    statusEl.textContent = 'error';
+                    statusEl.className = 'status-indicator status-error';
+                    contentEl.innerHTML = '<pre>' + escapeHtml(JSON.stringify(data, null, 2)) + '</pre>';
+                    return;
+                }
+                statusEl.textContent = 'success';
+                statusEl.className = 'status-indicator status-success';
+                if (data.session_id) {
+                    currentSessionId = data.session_id;
+                    saveCapturedImages();
+                    syncSessionIdToInputs();
+                }
+                renderCombinedResponse(data, contentEl);
+            } catch (error) {
+                statusEl.textContent = 'error';
+                statusEl.className = 'status-indicator status-error';
+                contentEl.textContent = `Error: ${error.message}`;
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Run Complete Analysis';
+            }
+        }
+
+        // Test Submit and Analyze (single call: 3 images → full results)
+        async function testSubmitAndAnalyze() {
+            const button = event.target;
+            const userId = document.getElementById('submit-analyze-user-id').value.trim();
+            const frontInput = document.getElementById('submit-analyze-front');
+            const leftInput = document.getElementById('submit-analyze-left');
+            const rightInput = document.getElementById('submit-analyze-right');
+            if (!userId) {
+                alert('Please enter User ID');
+                return;
+            }
+            if (!frontInput.files || !frontInput.files[0] || !leftInput.files || !leftInput.files[0] || !rightInput.files || !rightInput.files[0]) {
+                alert('Please select all 3 images (front, left, right)');
+                return;
+            }
+            const includeRecs = document.getElementById('submit-analyze-include-recommendations').checked;
+            button.disabled = true;
+            button.textContent = 'Submitting & analyzing...';
+            const responseArea = document.getElementById('submit-and-analyze-response');
+            const statusEl = document.getElementById('submit-and-analyze-status');
+            const contentEl = document.getElementById('submit-and-analyze-content');
+            responseArea.style.display = 'block';
+            try {
+                var formData = new FormData();
+                formData.append('user_id', userId);
+                formData.append('image_front', frontInput.files[0]);
+                formData.append('image_left', leftInput.files[0]);
+                formData.append('image_right', rightInput.files[0]);
+                formData.append('include_recommendations', includeRecs ? 'true' : 'false');
+                const response = await fetch(BASE_URL + '/submit-and-analyze', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    statusEl.textContent = 'error';
+                    statusEl.className = 'status-indicator status-error';
+                    contentEl.innerHTML = '<pre>' + escapeHtml(JSON.stringify(data, null, 2)) + '</pre>';
+                    return;
+                }
+                statusEl.textContent = 'success';
+                statusEl.className = 'status-indicator status-success';
+                if (data.session_id) {
+                    currentSessionId = data.session_id;
+                    saveCapturedImages();
+                    syncSessionIdToInputs();
+                }
+                renderCombinedResponse(data, contentEl);
+            } catch (error) {
+                statusEl.textContent = 'error';
+                statusEl.className = 'status-indicator status-error';
+                contentEl.textContent = 'Error: ' + error.message;
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Submit and Analyze';
+            }
+        }
+
+        // Chat on report (RAG, max 5 prompts)
+        async function sendChatOnReport() {
+            let sessionId = document.getElementById('chat-on-report-session-id').value.trim();
+            if (!sessionId && currentSessionId) sessionId = currentSessionId;
+            const messageEl = document.getElementById('chat-on-report-message');
+            const message = (messageEl && messageEl.value) ? messageEl.value.trim() : '';
+            if (!sessionId) {
+                alert('Please enter Session ID or run Submit and Analyze first to use current session');
+                return;
+            }
+            if (!message) {
+                alert('Please enter a question');
+                return;
+            }
+            const messagesEl = document.getElementById('chat-on-report-messages');
+            const counterEl = document.getElementById('chat-on-report-counter');
+            const sendBtn = document.querySelector('#chat-on-report .btn');
+            if (sendBtn) sendBtn.disabled = true;
+            try {
+                const response = await fetch(BASE_URL + '/chat-on-report', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: sessionId, message: message })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    const errMsg = data.detail || (typeof data.detail === 'object' ? JSON.stringify(data.detail) : data.message || 'Request failed');
+                    appendChatMessage(messagesEl, 'user', message);
+                    appendChatMessage(messagesEl, 'error', 'Error: ' + errMsg);
+                    if (sendBtn) sendBtn.disabled = false;
+                    return;
+                }
+                messageEl.value = '';
+                appendChatMessage(messagesEl, 'user', message);
+                appendChatMessage(messagesEl, 'assistant', data.reply);
+                const used = data.prompts_used != null ? data.prompts_used : 0;
+                const remaining = data.prompts_remaining != null ? data.prompts_remaining : 5 - used;
+                if (data.limit_reached || remaining <= 0) {
+                    counterEl.textContent = 'Limit reached (5 of 5 questions used)';
+                    counterEl.style.color = '#c62828';
+                    if (sendBtn) sendBtn.disabled = true;
+                } else {
+                    counterEl.textContent = used + ' of 5 questions used';
+                    counterEl.style.color = '#666';
+                    if (sendBtn) sendBtn.disabled = false;
+                }
+            } catch (error) {
+                appendChatMessage(messagesEl, 'user', message);
+                appendChatMessage(messagesEl, 'error', 'Error: ' + error.message);
+                if (sendBtn) sendBtn.disabled = false;
+            }
+        }
+
+        function appendChatMessage(container, role, text) {
+            if (!container) return;
+            const div = document.createElement('div');
+            div.style.marginBottom = '10px';
+            div.style.padding = '8px 12px';
+            div.style.borderRadius = '8px';
+            div.style.maxWidth = '100%';
+            if (role === 'user') {
+                div.style.background = '#e3f2fd';
+                div.style.marginLeft = '0';
+                div.style.marginRight = '24px';
+                div.innerHTML = '<strong>You:</strong> ' + escapeHtml(text);
+            } else if (role === 'assistant') {
+                div.style.background = '#e8f5e9';
+                div.style.marginLeft = '24px';
+                div.style.marginRight = '0';
+                div.innerHTML = '<strong>Assistant:</strong> ' + escapeHtml(text).replace(/\n/g, '<br>');
+            } else {
+                div.style.background = '#ffebee';
+                div.innerHTML = escapeHtml(text);
+            }
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function escapeHtml(s) {
+            if (s == null) return '';
+            const div = document.createElement('div');
+            div.textContent = s;
+            return div.innerHTML;
+        }
+
+        // Test Get Latest Session
+        async function testGetLatestSession() {
+            const button = event.target;
+            const userId = document.getElementById('session-user-id').value;
+            
+            if (!userId) {
+                alert('Please enter User ID');
+                return;
+            }
+            
+            button.disabled = true;
+            button.textContent = 'Loading...';
+            
+            try {
+                const response = await fetch(`${BASE_URL}/session/${userId}/latest`);
+                const data = await response.json();
+                
+                showResponse('session', response.ok ? 'success' : 'error', JSON.stringify(data, null, 2));
+            } catch (error) {
+                showResponse('session', 'error', `Error: ${error.message}`);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Get Latest Session';
+            }
+        }
+
+        // Test Get Heatmaps
+        async function testGetHeatmaps() {
+            const button = event.target;
+            const sessionId = document.getElementById('heatmaps-session-id').value;
+            
+            if (!sessionId) {
+                alert('Please enter Session ID');
+                return;
+            }
+            
+            button.disabled = true;
+            button.textContent = 'Loading...';
+            
+            try {
+                const response = await fetch(`${BASE_URL}/heatmaps/${sessionId}`);
+                const data = await response.json();
+                
+                if (data.success && data.images) {
+                    // Display heatmaps organized by image angle
+                    let displayHtml = '<div class="heatmap-display">';
+                    displayHtml += `<div class="heatmap-header">`;
+                    displayHtml += `<h3>🎯 Heatmaps for Session: ${sessionId}</h3>`;
+                    displayHtml += `<div class="heatmap-stats">`;
+                    displayHtml += `<span class="stat-item">📊 Total Heatmaps: ${data.total_heatmaps}</span>`;
+                    displayHtml += `<span class="stat-item">📐 Angles: ${data.angles_available.join(', ')}</span>`;
+                    displayHtml += `</div>`;
+                    displayHtml += `</div>`;
+                    
+                    // Display each image angle
+                    for (const [angle, imageData] of Object.entries(data.images)) {
+                        if (imageData.individual_heatmaps.length > 0 || imageData.combined_heatmap) {
+                            displayHtml += `<div class="image-angle">`;
+                            displayHtml += `<div class="angle-header">`;
+                            displayHtml += `<h4>📷 ${angle.toUpperCase()} View</h4>`;
+                            displayHtml += `<span class="angle-count">${imageData.individual_heatmaps.length} individual + ${imageData.combined_heatmap ? '1 combined' : '0 combined'}</span>`;
+                            displayHtml += `</div>`;
+                            
+                            // Display combined heatmap first (most important)
+                            if (imageData.combined_heatmap) {
+                                displayHtml += `<div class="combined-section">`;
+                                displayHtml += `<h5>🔍 Combined Analysis</h5>`;
+                                displayHtml += `<div class="combined-heatmap">`;
+                                displayHtml += `<img src="${imageData.combined_heatmap.url}" alt="Combined Heatmap" style="max-width: 300px; max-height: 300px; border: 2px solid #007bff; border-radius: 8px; margin: 5px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">`;
+                                displayHtml += `</div>`;
+                                displayHtml += `</div>`;
+                            }
+                            
+                            // Display individual disease heatmaps
+                            if (imageData.individual_heatmaps.length > 0) {
+                                displayHtml += `<div class="individual-section">`;
+                                displayHtml += `<h5>🔬 Individual Disease Analysis</h5>`;
+                                displayHtml += `<div class="heatmap-grid">`;
+                                
+                                imageData.individual_heatmaps.forEach((heatmap, index) => {
+                                    const confidenceColor = heatmap.confidence > 0.7 ? '#28a745' : heatmap.confidence > 0.4 ? '#ffc107' : '#dc3545';
+                                    const severityColor = heatmap.severity === 'severe' ? '#dc3545' : heatmap.severity === 'moderate' ? '#ffc107' : '#28a745';
+                                    
+                                    displayHtml += `<div class="heatmap-item">`;
+                                    displayHtml += `<div class="heatmap-header">`;
+                                    displayHtml += `<h6>${heatmap.disease_name}</h6>`;
+                                    displayHtml += `<span class="confidence-badge" style="background-color: ${confidenceColor}">${(heatmap.confidence * 100).toFixed(1)}%</span>`;
+                                    displayHtml += `</div>`;
+                                    displayHtml += `<div class="heatmap-info">`;
+                                    displayHtml += `<p><strong>Category:</strong> ${heatmap.category}</p>`;
+                                    displayHtml += `<p><strong>Severity:</strong> <span style="color: ${severityColor}">${heatmap.severity}</span></p>`;
+                                    displayHtml += `</div>`;
+                                    displayHtml += `<div class="heatmap-image">`;
+                                    displayHtml += `<img src="${heatmap.url}" alt="${heatmap.disease_name}" style="max-width: 200px; max-height: 200px; border: 1px solid #ddd; border-radius: 4px; margin: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">`;
+                                    displayHtml += `</div>`;
+                                    displayHtml += `</div>`;
+                                });
+                                
+                                displayHtml += `</div>`;
+                                displayHtml += `</div>`;
+                            }
+                            
+                            displayHtml += `</div>`;
+                        }
+                    }
+                    
+                    displayHtml += '</div>';
+                    
+                    // Show the formatted display as HTML
+                    const responseElement = document.getElementById('heatmaps-response');
+                    responseElement.style.display = 'block';
+                    responseElement.innerHTML = `
+                        <h4>Heatmap Results</h4>
+                        <div class="response-content heatmap-content">
+                            ${displayHtml}
+                        </div>
+                    `;
+                } else {
+                    showResponse('heatmaps', response.ok ? 'success' : 'error', JSON.stringify(data, null, 2));
+                }
+            } catch (error) {
+                showResponse('heatmaps', 'error', `Error: ${error.message}`);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Get Heatmaps';
+            }
+        }
+
+
+        // Test Get Recommendations
+        async function testGetRecommendations() {
+            const button = event.target;
+            const sessionId = document.getElementById('recommendations-session-id').value;
+            const userPreferences = document.getElementById('user-preferences').value;
+            
+            if (!sessionId) {
+                alert('Please enter Session ID');
+                return;
+            }
+            
+            button.disabled = true;
+            button.textContent = 'Generating...';
+            
+            try {
+                let preferences = null;
+                if (userPreferences.trim()) {
+                    try {
+                        preferences = JSON.parse(userPreferences);
+                    } catch (e) {
+                        alert('Invalid JSON in User Preferences field');
+                        return;
+                    }
+                }
+                
+                const response = await fetch(`${BASE_URL}/recommendations`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        session_id: sessionId,
+                        user_preferences: preferences
+                    })
+                });
+                
+                const data = await response.json();
+                showResponse('recommendations', response.ok ? 'success' : 'error', JSON.stringify(data, null, 2));
+            } catch (error) {
+                showResponse('recommendations', 'error', `Error: ${error.message}`);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Get Recommendations';
+            }
+        }
+
+        // Initialize the UI
+        document.addEventListener('DOMContentLoaded', function() {
+            // Set default to local
+            document.getElementById('urlSelector').value = 'local';
+            switchBackend();
+            
+            // Clear all response areas on load
+            const responseAreas = document.querySelectorAll('.response-area');
+            responseAreas.forEach(area => {
+                area.style.display = 'none';
+            });
+            
+            // Load captured images (only if valid session exists)
+            loadCapturedImages();
+            
+            // Add user_id change listener to detect session changes
+            const userIdInput = document.getElementById('capture-user-id');
+            if (userIdInput) {
+                userIdInput.addEventListener('blur', function() {
+                    const newUserId = this.value.trim();
+                    if (currentUserId && newUserId && currentUserId !== newUserId) {
+                        console.log(`User ID changed: ${currentUserId} -> ${newUserId}`);
+                        // Optionally clear on change - user can use Clear Session button instead
+                    }
+                });
+            }
+            
+            console.log('Healoncal API Test UI loaded successfully');
+            console.log(`Default backend: Local (${BASE_URL})`);
+            if (currentSessionId) {
+                console.log(`Current session: ${currentSessionId} for user: ${currentUserId}`);
+            } else {
+                console.log('No active session - ready for new capture');
+            }
+        });
+    </script>
+</body>
+</html>
