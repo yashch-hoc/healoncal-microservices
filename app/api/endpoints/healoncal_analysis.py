@@ -21,7 +21,7 @@ from app.services.gemini_recommendation_service import gemini_recommendation_ser
 from app.services.treatment_storage_service import treatment_storage_service
 from app.services.metrics_service import metrics_service
 from app.services.report_chat_service import report_chat_service
-from app.services.gcs_storage_service import get_signed_url as gcs_presign
+from app.services.s3_storage_service import get_signed_url as s3_presign
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -250,6 +250,7 @@ def _build_results_response(clean_session_id: str, results: Dict[str, Any]) -> D
     for result in results["individual_results"]:
         response["healoncal_results"]["individual_analyses"].append({
             "angle": result["angle"],
+            "captured_image_url": result.get("captured_image_url", ""),
             "healoncal_metrics": {
                 "diagnostic_accuracy": _round_metric(result["diagnostic_accuracy"]),
                 "biomarkers_analyzed": result["biomarkers_analyzed"],
@@ -396,8 +397,8 @@ async def _fetch_heatmaps_for_session(clean_session_id: str) -> Dict[str, Any]:
             colors = {}
 
         raw_url = heatmap.get("heatmap_url", "")
-        # Use signed URL so browser can load images from private GCS bucket
-        display_url = gcs_presign(raw_url) if raw_url else ""
+        # Use signed URL so browser can load images from private S3 bucket
+        display_url = s3_presign(raw_url) if raw_url else ""
         heatmap_data = {
             "disease_name": heatmap["disease_name"],
             "category": heatmap.get("category", "cosmetic"),
@@ -531,24 +532,35 @@ async def submit_and_analyze(
                 raise HTTPException(status_code=400, detail=f"Empty file for {name}.")
             return data
 
-        image_front_bytes = await read_and_validate(image_front, "image_front")
-        image_left_bytes = await read_and_validate(image_left, "image_left")
-        image_right_bytes = await read_and_validate(image_right, "image_right")
+        image_front_bytes, image_left_bytes, image_right_bytes = await asyncio.gather(
+            read_and_validate(image_front, "image_front"),
+            read_and_validate(image_left, "image_left"),
+            read_and_validate(image_right, "image_right"),
+        )
 
         # Always create a fresh session for this combined submit, then attach all 3 images
         session_id = await healoncal_service.create_analysis_session(user_id_str)
 
-        for angle, image_bytes in [
+        capture_specs = [
             ("front", image_front_bytes),
             ("left", image_left_bytes),
             ("right", image_right_bytes),
-        ]:
-            result = await healoncal_service.capture_image(
-                session_id=session_id,
-                user_id=user_id_str,
-                angle=angle,
-                image_data=image_bytes,
-            )
+        ]
+        capture_results = await asyncio.gather(
+            *[
+                healoncal_service.capture_image(
+                    session_id=session_id,
+                    user_id=user_id_str,
+                    angle=angle,
+                    image_data=image_bytes,
+                )
+                for angle, image_bytes in capture_specs
+            ],
+            return_exceptions=True,
+        )
+        for (angle, _), result in zip(capture_specs, capture_results):
+            if isinstance(result, Exception):
+                raise HTTPException(status_code=500, detail=f"Capture failed for {angle}: {result}")
             if not result.get("success"):
                 err = result.get("error", "Unknown error")
                 if "Database connection" in err:
@@ -639,6 +651,238 @@ async def submit_and_analyze(
     except Exception as e:
         logger.error(f"[HEALONCAL SUBMIT-AND-ANALYZE] Failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _sse(event: str, data: Any) -> bytes:
+    """Format a single Server-Sent Events frame."""
+    payload = json.dumps(data, default=str)
+    return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
+
+
+@router.post("/submit-and-analyze/stream")
+async def submit_and_analyze_stream(
+    user_id: str = Form(...),
+    image_front: UploadFile = File(...),
+    image_left: UploadFile = File(...),
+    image_right: UploadFile = File(...),
+    include_recommendations: str = Form("true"),
+):
+    """
+    Server-Sent Events version of /submit-and-analyze. Emits progress as each
+    phase finishes so the UI can render results before heatmaps/Gemini return.
+
+    Event sequence:
+      progress   {stage: "validating"|"captured"|"analyzing"|"heatmaps_started"|...}
+      results    {results: <response_results>}   (metrics, before heatmaps/recs)
+      heatmaps   {heatmaps: <heatmaps_payload>}
+      recommendations {recommendations: <recs>}
+      done       {session_id, processed_images}
+      error      {error: str}   (fatal)
+    """
+    user_id_str = (user_id or "").strip()
+    if not user_id_str:
+        raise HTTPException(status_code=400, detail="user_id is required")
+    include_recs = include_recommendations.lower() not in ("false", "0", "no")
+
+    # Read bodies outside the generator so FastAPI's UploadFile is available.
+    async def read_and_validate(u: UploadFile, name: str) -> bytes:
+        ct = u.content_type or ""
+        if not ct.startswith("image/"):
+            raise HTTPException(status_code=400, detail=f"Invalid file type for {name}: {ct}. Expected image.")
+        data = await u.read()
+        if not data:
+            raise HTTPException(status_code=400, detail=f"Empty file for {name}.")
+        return data
+
+    image_front_bytes, image_left_bytes, image_right_bytes = await asyncio.gather(
+        read_and_validate(image_front, "image_front"),
+        read_and_validate(image_left, "image_left"),
+        read_and_validate(image_right, "image_right"),
+    )
+
+    async def event_stream():
+        try:
+            yield _sse("progress", {"stage": "validating"})
+
+            session_id = await healoncal_service.create_analysis_session(user_id_str)
+            yield _sse("progress", {"stage": "session_created", "session_id": session_id})
+
+            # Parallel S3 captures.
+            capture_specs = [
+                ("front", image_front_bytes),
+                ("left", image_left_bytes),
+                ("right", image_right_bytes),
+            ]
+            capture_results = await asyncio.gather(
+                *[
+                    healoncal_service.capture_image(
+                        session_id=session_id,
+                        user_id=user_id_str,
+                        angle=angle,
+                        image_data=image_bytes,
+                    )
+                    for angle, image_bytes in capture_specs
+                ],
+                return_exceptions=True,
+            )
+            for (angle, _), result in zip(capture_specs, capture_results):
+                if isinstance(result, Exception) or not (isinstance(result, dict) and result.get("success")):
+                    err = (
+                        str(result)
+                        if isinstance(result, Exception)
+                        else result.get("error", "Unknown error")
+                    )
+                    yield _sse("error", {"error": f"Capture failed for {angle}: {err}"})
+                    return
+            yield _sse("progress", {"stage": "captured"})
+
+            # Fast analysis-only step (no heatmaps yet). Heatmaps are driven
+            # per-angle below so the UI gets `results` in ~5s instead of ~25s.
+            yield _sse("progress", {"stage": "analyzing"})
+            analysis_result = await healoncal_service.analyze_session(
+                session_id, generate_heatmaps=False
+            )
+            if not analysis_result.get("success"):
+                yield _sse("error", {"error": analysis_result.get("error", "Analysis failed")})
+                return
+
+            clean_session_id = session_id.strip()
+            results = await healoncal_service.get_analysis_results(clean_session_id)
+            if not results.get("success"):
+                yield _sse("error", {"error": results.get("error", "Results fetch failed")})
+                return
+            response_results = _build_results_response(clean_session_id, results)
+            yield _sse("results", {"session_id": clean_session_id, "results": response_results})
+
+            # Build angle → detected_diseases map (DB shape → in-memory shape
+            # expected by heatmap service).
+            analysis_by_arid: Dict[str, str] = {}
+            for r in results.get("individual_results", []):
+                arid = r.get("id")
+                angle = (r.get("angle") or "").lower()
+                if arid and angle:
+                    analysis_by_arid[str(arid)] = angle
+
+            diseases_by_angle: Dict[str, list] = {"front": [], "left": [], "right": []}
+            for d in results.get("detected_diseases", []):
+                arid = str(d.get("analysis_result_id") or "")
+                angle = analysis_by_arid.get(arid)
+                if not angle:
+                    continue
+                diseases_by_angle.setdefault(angle, []).append({
+                    "name": d.get("disease_name") or d.get("name") or "Unknown",
+                    "category": d.get("disease_category") or d.get("category") or "unknown",
+                    "confidence": float(d.get("confidence_score") or d.get("confidence") or 0.0),
+                    "severity": d.get("severity_level") or d.get("severity") or "mild",
+                    "affected_area": d.get("affected_area") or "face",
+                    "requires_medical_attention": bool(d.get("requires_medical_attention")),
+                })
+
+            session_user_id = user_id_str
+
+            async def gen_and_fetch_angle(angle: str):
+                diseases = diseases_by_angle.get(angle) or []
+                if diseases:
+                    try:
+                        await healoncal_service._generate_heatmaps_parallel(
+                            clean_session_id, session_user_id, diseases, angle
+                        )
+                    except Exception as ge:
+                        logger.error(f"[HEALONCAL STREAM] Heatmap gen failed for {angle}: {ge}")
+                # Always fetch whatever is there (even if zero).
+                full = await _fetch_heatmaps_for_session(clean_session_id)
+                images = (full or {}).get("images", {})
+                return angle, {
+                    "session_id": clean_session_id,
+                    "angle": angle,
+                    angle: images.get(angle, {"individual_heatmaps": [], "combined_heatmap": None}),
+                }
+
+            formatted_results = {
+                "session_id": clean_session_id,
+                "healoncal_results": {
+                    "individual_analyses": results.get("individual_results", []),
+                    "combined_analysis": None,
+                },
+            }
+
+            if include_recs:
+                async def _gemini():
+                    try:
+                        return await gemini_recommendation_service.generate_product_recommendations(
+                            formatted_results, user_preferences=None
+                        )
+                    except Exception as rec_err:
+                        logger.error(f"[HEALONCAL STREAM] Gemini failed: {rec_err}")
+                        return {"success": False, "error": str(rec_err)}
+                gemini_task = asyncio.create_task(_gemini())
+            else:
+                gemini_task = None
+
+            pending: Dict[asyncio.Task, str] = {
+                asyncio.create_task(gen_and_fetch_angle("front")): "heatmap_angle",
+                asyncio.create_task(gen_and_fetch_angle("left")): "heatmap_angle",
+                asyncio.create_task(gen_and_fetch_angle("right")): "heatmap_angle",
+            }
+            if gemini_task:
+                pending[gemini_task] = "recommendations"
+
+            final_heatmaps = {
+                "success": True,
+                "session_id": clean_session_id,
+                "images": {
+                    "front": {"individual_heatmaps": [], "combined_heatmap": None},
+                    "left": {"individual_heatmaps": [], "combined_heatmap": None},
+                    "right": {"individual_heatmaps": [], "combined_heatmap": None},
+                },
+            }
+
+            while pending:
+                done, _ = await asyncio.wait(
+                    pending.keys(), return_when=asyncio.FIRST_COMPLETED
+                )
+                for t in done:
+                    kind = pending.pop(t)
+                    try:
+                        value = t.result()
+                    except Exception as te:
+                        logger.error(f"[HEALONCAL STREAM] task {kind} error: {te}")
+                        value = None
+
+                    if kind == "heatmap_angle" and isinstance(value, tuple):
+                        angle, payload = value
+                        final_heatmaps["images"][angle] = payload.get(angle) or final_heatmaps["images"][angle]
+                        yield _sse("heatmap_angle", payload)
+                    elif kind == "recommendations":
+                        yield _sse("recommendations", {"recommendations": value})
+
+            # Emit a consolidated `heatmaps` event too so clients that only know
+            # the v1 shape still get the full payload without a refetch.
+            final_heatmaps["total_heatmaps"] = sum(
+                len(a["individual_heatmaps"]) + (1 if a["combined_heatmap"] else 0)
+                for a in final_heatmaps["images"].values()
+            )
+            yield _sse("heatmaps", {"heatmaps": final_heatmaps})
+
+            yield _sse("done", {
+                "session_id": clean_session_id,
+                "processed_images": analysis_result.get("processed_images", 0),
+            })
+        except HTTPException as he:
+            yield _sse("error", {"error": he.detail if isinstance(he.detail, str) else str(he.detail)})
+        except Exception as e:
+            logger.error(f"[HEALONCAL STREAM] Failed: {e}")
+            yield _sse("error", {"error": str(e)})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",  # disable nginx buffering
+            "Connection": "keep-alive",
+        },
+    )
 
 
 def _build_report_context_for_chat(results: Dict[str, Any]) -> str:
@@ -1044,3 +1288,148 @@ async def get_product_recommendations(request: RecommendationRequest):
     except Exception as e:
         logger.error(f"[GEMINI ERROR] Failed to generate recommendations: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to generate recommendations: {str(e)}")
+
+
+def _json_default(o):
+    """JSON serializer that handles datetime/date/Decimal."""
+    if isinstance(o, (datetime, date)):
+        return o.isoformat()
+    if isinstance(o, Decimal):
+        return float(o)
+    return str(o)
+
+
+def _sse_event(event: str, data: Any) -> bytes:
+    """Format a Server-Sent Event frame."""
+    payload = json.dumps(data, default=_json_default) if not isinstance(data, str) else json.dumps(data)
+    return f"event: {event}\ndata: {payload}\n\n".encode("utf-8")
+
+
+@router.post("/complete-analysis")
+async def complete_analysis(request: CompleteAnalysisRequest):
+    """
+    Streaming end-to-end analysis for the most recent session of a user.
+
+    SSE events emitted:
+      - init:  { results: {...}, heatmaps: {...} }  (the structured report)
+      - chunk: "text"                               (progressive AI recommendation text; may repeat)
+      - done:  { results, heatmaps, recommendations } (final consolidated payload)
+      - error: { error: "...message..." }           (fatal; stream ends)
+    """
+    user_id = (request.user_id or "").strip()
+    include_recs = bool(request.include_recommendations)
+
+    async def event_stream():
+        try:
+            # 1) Find latest session for user
+            db = healoncal_service._get_db()
+            if not db.is_available():
+                yield _sse_event("error", {"error": "Database connection not available"})
+                return
+            sessions = db.fetch_all(
+                "SELECT * FROM healoncal_analysis_sessions WHERE user_id = %s ORDER BY created_at DESC LIMIT 1",
+                (user_id,),
+            )
+            if not sessions:
+                yield _sse_event("error", {"error": f"No sessions found for user '{user_id}'"})
+                return
+            session_id = sessions[0]["id"]
+            images = db.fetch_all(
+                "SELECT * FROM healoncal_captured_images WHERE session_id = %s",
+                (session_id,),
+            )
+            if len(images) < 3:
+                yield _sse_event("error", {"error": f"Need 3 images; have {len(images)}"})
+                return
+
+            # 2) Run analysis (idempotent if already completed)
+            analyze_result = await healoncal_service.analyze_session(session_id)
+            if not analyze_result.get("success"):
+                yield _sse_event(
+                    "error",
+                    {"error": analyze_result.get("error", "Analysis failed")},
+                )
+                return
+
+            # 3) Fetch results + heatmaps
+            results = await healoncal_service.get_analysis_results(session_id)
+            if not results.get("success"):
+                yield _sse_event("error", {"error": results.get("error", "Failed to load results")})
+                return
+            results_payload = _build_results_response(session_id, results)
+
+            # Frontend reads `healoncal_results.combined_analysis` (hydration,
+            # elasticity, priority_concerns, etc.). `get_analysis_results`
+            # returns combined_results=None, so compute it here from the
+            # individual per-angle rows.
+            try:
+                combined = healoncal_service._create_combined_results(
+                    session_id, results.get("individual_results") or []
+                )
+            except Exception as ce:
+                logger.warning("[COMPLETE-ANALYSIS] combined_results failed: %s", ce)
+                combined = {}
+            results_payload.setdefault("healoncal_results", {})
+            results_payload["healoncal_results"]["combined_analysis"] = combined
+
+            heatmaps_payload = await _fetch_heatmaps_for_session(session_id)
+
+            init_payload = {"results": results_payload, "heatmaps": heatmaps_payload}
+            yield _sse_event("init", init_payload)
+
+            # 4) Optionally stream recommendations
+            recommendations_payload: Optional[Dict[str, Any]] = None
+            if include_recs:
+                try:
+                    formatted = {
+                        "session_id": session_id,
+                        "healoncal_results": {
+                            "individual_analyses": results.get("individual_results", []),
+                            "combined_analysis": results.get("combined_results"),
+                        },
+                    }
+                    recs = await gemini_recommendation_service.generate_product_recommendations(
+                        formatted, None
+                    )
+                    # Emit a single text chunk so the UI can show something as recs are ready.
+                    summary_text = recs.get("summary") if isinstance(recs, dict) else None
+                    if summary_text:
+                        yield _sse_event("chunk", str(summary_text))
+                    # Frontend accesses recommendations.recommendations.products —
+                    # mirror the shape of POST /recommendations here.
+                    recommendations_payload = {
+                        "success": True,
+                        "session_id": session_id,
+                        "recommendations": recs,
+                    }
+                except Exception as rec_err:
+                    logger.warning("[COMPLETE-ANALYSIS] recommendations failed: %s", rec_err)
+                    recommendations_payload = {
+                        "success": False,
+                        "error": str(rec_err),
+                        "recommendations": {"products": []},
+                    }
+
+            # 5) Final done payload
+            done_payload = {
+                "results": results_payload,
+                "heatmaps": heatmaps_payload,
+                "recommendations": recommendations_payload,
+            }
+            yield _sse_event("done", done_payload)
+
+        except HTTPException as he:
+            yield _sse_event("error", {"error": he.detail if isinstance(he.detail, str) else str(he.detail)})
+        except Exception as e:
+            logger.exception("[COMPLETE-ANALYSIS] unexpected error: %s", e)
+            yield _sse_event("error", {"error": str(e)})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

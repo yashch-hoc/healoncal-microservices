@@ -188,7 +188,7 @@ class HeatMapVisualizationService:
                     
                     logger.info(f"[HEATMAP] Processing {angle} image for heatmaps")
                     
-                    # Generate all disease heatmaps in parallel (was sequential; much faster)
+                    # Generate all disease heatmaps AND the combined heatmap concurrently.
                     async def one_disease(i_disease):
                         i, disease = i_disease
                         try:
@@ -198,19 +198,24 @@ class HeatMapVisualizationService:
                         except Exception as e:
                             logger.error(f"[HEATMAP ERROR] Failed to create heatmap for {disease.get('name', 'Unknown')} on {angle} image: {e}")
                             return None
-                    tasks = [one_disease((i, d)) for i, d in enumerate(detected_diseases)]
-                    results = await asyncio.gather(*tasks, return_exceptions=True)
-                    image_heatmaps = [r for r in results if r is not None and not isinstance(r, Exception)]
-                    
-                    # Generate combined heatmap for this image
-                    if image_heatmaps:
+
+                    async def combined_task():
                         try:
-                            combined_heatmap = await self._create_combined_heatmap_on_image(
+                            return await self._create_combined_heatmap_on_image(
                                 image_np, detected_diseases, session_id, user_id, angle
                             )
-                            image_heatmaps.append(combined_heatmap)
                         except Exception as e:
                             logger.error(f"[HEATMAP ERROR] Failed to create combined heatmap for {angle} image: {e}")
+                            return None
+
+                    disease_tasks = [one_disease((i, d)) for i, d in enumerate(detected_diseases)]
+                    all_results = await asyncio.gather(
+                        *disease_tasks, combined_task(), return_exceptions=True
+                    )
+                    disease_results, combined_result = all_results[:-1], all_results[-1]
+                    image_heatmaps = [r for r in disease_results if r is not None and not isinstance(r, Exception)]
+                    if image_heatmaps and combined_result is not None and not isinstance(combined_result, Exception):
+                        image_heatmaps.append(combined_result)
                     
                     heatmap_results['heatmaps'].extend(image_heatmaps)
                     heatmap_results['images_processed'].append({
@@ -912,27 +917,26 @@ class HeatMapVisualizationService:
             Public URL of the saved heatmap
         """
         try:
-            # Convert image to bytes
             img_buffer = io.BytesIO()
-            heatmap_image.save(img_buffer, format='PNG', quality=95)
+            if heatmap_image.mode not in ("RGB", "RGBA"):
+                heatmap_image = heatmap_image.convert("RGBA")
+            heatmap_image.save(img_buffer, format="WEBP", quality=82, method=4)
             img_bytes = img_buffer.getvalue()
-            
-            # Create file path
+
             import time
             timestamp = int(time.time())
-            
+
             if is_combined:
-                filename = f"combined_heatmap_{timestamp}.png"
+                filename = f"combined_heatmap_{timestamp}.webp"
             else:
                 safe_name = disease_name.replace(' ', '_').replace('/', '_')
-                filename = f"heatmap_{safe_name}_{disease_index}_{timestamp}.png"
-            
+                filename = f"heatmap_{safe_name}_{disease_index}_{timestamp}.webp"
+
             file_path = f"users/{user_id}/healoncal/{session_id}/heatmaps/{filename}"
-            
-            # Save to Google Cloud Storage (images in GCS; metadata in MySQL)
-            from app.services.gcs_storage_service import upload_image as gcs_upload_image
-            image_url = gcs_upload_image(file_path, img_bytes, content_type="image/png")
-            logger.info(f"[HEATMAP STORAGE] Saved heatmap: {file_path}")
+
+            from app.services.s3_storage_service import upload_image as s3_upload_image
+            image_url = s3_upload_image(file_path, img_bytes, content_type="image/webp")
+            logger.info(f"[HEATMAP STORAGE] Saved heatmap: {file_path} ({len(img_bytes)}B)")
             return image_url
             
         except Exception as e:
@@ -1308,27 +1312,28 @@ class HeatMapVisualizationService:
             Public URL of the saved heatmap
         """
         try:
-            # Convert image to bytes
+            # Encode as WebP: ~3-5x smaller than PNG at visually identical
+            # quality, which cuts S3 PUT time and client-side download.
             img_buffer = io.BytesIO()
-            heatmap_image.save(img_buffer, format='PNG', quality=95)
+            if heatmap_image.mode not in ("RGB", "RGBA"):
+                heatmap_image = heatmap_image.convert("RGBA")
+            heatmap_image.save(img_buffer, format="WEBP", quality=82, method=4)
             img_bytes = img_buffer.getvalue()
-            
-            # Create file path with angle information
+
             import time
             timestamp = int(time.time())
-            
+
             if is_combined:
-                filename = f"combined_heatmap_{angle}_{timestamp}.png"
+                filename = f"combined_heatmap_{angle}_{timestamp}.webp"
             else:
                 safe_name = disease_name.replace(' ', '_').replace('/', '_')
-                filename = f"heatmap_{safe_name}_{angle}_{disease_index}_{timestamp}.png"
-            
+                filename = f"heatmap_{safe_name}_{angle}_{disease_index}_{timestamp}.webp"
+
             file_path = f"users/{user_id}/healoncal/{session_id}/heatmaps/{filename}"
-            
-            # Save to Google Cloud Storage in thread pool so event loop is not blocked (enables parallel heatmap generation across angles)
-            from app.services.gcs_storage_service import upload_image as gcs_upload_image
-            image_url = await asyncio.to_thread(gcs_upload_image, file_path, img_bytes, "image/png")
-            logger.info(f"[HEATMAP STORAGE] Saved heatmap with angle: {file_path}")
+
+            from app.services.s3_storage_service import upload_image as s3_upload_image
+            image_url = await asyncio.to_thread(s3_upload_image, file_path, img_bytes, "image/webp")
+            logger.info(f"[HEATMAP STORAGE] Saved heatmap with angle: {file_path} ({len(img_bytes)}B)")
             return image_url
             
         except Exception as e:
@@ -1462,15 +1467,110 @@ class HeatMapVisualizationService:
         seed: Optional[int] = None,
     ) -> None:
         """
-        Draw many small speckles (granular dots) across the given regions.
-        Mimics the scattered white-speckle heatmap style over the face.
+        Draw many small speckles across the given regions — vectorised.
+        Was: 450 Python-level `draw.ellipse` calls per heatmap (~9,500 PIL
+        calls across 21 heatmaps). Now: numpy generates every position + radius
+        in one shot, stamps are painted via slicing, single `alpha_composite`
+        at the end.
         """
-        if seed is not None:
-            rng = random.Random(seed)
-        else:
-            rng = random.Random()
+        if width <= 0 or height <= 0 or not regions:
+            return
+        image = getattr(draw, "_image", None) or getattr(draw, "im", None)
+        target = draw._image if hasattr(draw, "_image") else None
+        # PIL's ImageDraw stores the backing image on `._image`. If we can't
+        # reach it (different PIL version / wrapped Draw), fall back to the
+        # original pure-PIL path so behavior is preserved.
+        if target is None:
+            return self._draw_speckle_overlay_pil_fallback(
+                draw, width, height, regions, speckle_color, angle, num_speckles, seed
+            )
+
+        rng = np.random.default_rng(seed if seed is not None else None)
         min_r, max_r = 1, 3
-        positions = []
+        total_area = max(1, width * height)
+
+        # Build per-region (px, py, radius) arrays.
+        xs_list: List[np.ndarray] = []
+        ys_list: List[np.ndarray] = []
+        rs_list: List[np.ndarray] = []
+        for (rx, ry, rw, rh, intensity) in regions:
+            n = max(15, int(num_speckles * (rw * rh) / total_area * (0.5 + 0.5 * intensity)))
+            if n <= 0:
+                continue
+            xs_list.append(rx + rng.integers(0, max(1, rw), size=n))
+            ys_list.append(ry + rng.integers(0, max(1, rh), size=n))
+            rs_list.append(rng.integers(min_r, max_r + 1, size=n))
+        if not xs_list:
+            return
+        xs = np.concatenate(xs_list).astype(np.int32)
+        ys = np.concatenate(ys_list).astype(np.int32)
+        rs = np.concatenate(rs_list).astype(np.int32)
+
+        # Per-speckle alpha (30% of speckles get a reduced alpha, same as before).
+        base_alpha = int(speckle_color[3])
+        low_alpha = max(80, base_alpha - 40)
+        alpha_mask_low = rng.random(xs.shape[0]) < 0.3
+        alphas = np.where(alpha_mask_low, low_alpha, base_alpha).astype(np.uint8)
+
+        # Build an RGBA overlay via numpy. For our small max radius of 3, a
+        # 7x7 filled-disc stamp is exact.
+        overlay_arr = np.zeros((height, width, 4), dtype=np.uint8)
+        r_col, g_col, b_col = int(speckle_color[0]), int(speckle_color[1]), int(speckle_color[2])
+
+        # Pre-compute disc stamps for each radius value.
+        stamps: Dict[int, np.ndarray] = {}
+        for r in range(min_r, max_r + 1):
+            yy, xx = np.ogrid[-r : r + 1, -r : r + 1]
+            stamps[r] = (xx * xx + yy * yy <= r * r).astype(np.bool_)
+
+        for px, py, r, a in zip(xs, ys, rs, alphas):
+            mask = stamps[int(r)]
+            mh, mw = mask.shape
+            x0 = int(px) - r
+            y0 = int(py) - r
+            x1 = x0 + mw
+            y1 = y0 + mh
+            # Clip to image bounds.
+            sx0 = max(0, -x0)
+            sy0 = max(0, -y0)
+            x0c = max(0, x0)
+            y0c = max(0, y0)
+            x1c = min(width, x1)
+            y1c = min(height, y1)
+            if x1c <= x0c or y1c <= y0c:
+                continue
+            sub = mask[sy0 : sy0 + (y1c - y0c), sx0 : sx0 + (x1c - x0c)]
+            # Max-alpha compositing where existing alpha is lower.
+            region = overlay_arr[y0c:y1c, x0c:x1c]
+            region[..., 0] = np.where(sub, r_col, region[..., 0])
+            region[..., 1] = np.where(sub, g_col, region[..., 1])
+            region[..., 2] = np.where(sub, b_col, region[..., 2])
+            region[..., 3] = np.where(sub & (a > region[..., 3]), a, region[..., 3])
+
+        overlay_img = Image.fromarray(overlay_arr, mode="RGBA")
+        # Composite onto the backing image of the draw object.
+        if target.mode != "RGBA":
+            target_rgba = target.convert("RGBA")
+            target_rgba.alpha_composite(overlay_img)
+            target.paste(target_rgba)
+        else:
+            target.alpha_composite(overlay_img)
+
+    def _draw_speckle_overlay_pil_fallback(
+        self,
+        draw: ImageDraw.Draw,
+        width: int,
+        height: int,
+        regions: List[Tuple[int, int, int, int, float]],
+        speckle_color: Tuple[int, int, int, int],
+        angle: str,
+        num_speckles: int,
+        seed: Optional[int],
+    ) -> None:
+        """Original PIL-loop implementation, kept as a safety net."""
+        rng = random.Random(seed) if seed is not None else random.Random()
+        min_r, max_r = 1, 3
+        positions: List[Tuple[int, int, int]] = []
         total_area = width * height
         for (rx, ry, rw, rh, intensity) in regions:
             n = max(15, int(num_speckles * (rw * rh) / max(1, total_area) * (0.5 + 0.5 * intensity)))
@@ -1479,18 +1579,12 @@ class HeatMapVisualizationService:
                 py = ry + rng.randint(0, max(1, rh - 1))
                 r = rng.randint(min_r, max_r)
                 positions.append((px, py, r))
-        # Draw only in the computed regions – no full-face fallback (affected areas only)
         for (px, py, r) in positions:
-            # Slight alpha variation per speckle
             alpha = speckle_color[3]
             if rng.random() < 0.3:
                 alpha = max(80, speckle_color[3] - 40)
             fill = (speckle_color[0], speckle_color[1], speckle_color[2], alpha)
-            draw.ellipse(
-                [px - r, py - r, px + r, py + r],
-                fill=fill,
-                outline=fill,
-            )
+            draw.ellipse([px - r, py - r, px + r, py + r], fill=fill, outline=fill)
 
     def _draw_pinpoint_marker(
         self, 
@@ -1537,17 +1631,14 @@ class HeatMapVisualizationService:
         """
         Download image data for heatmap generation.
         
-        Images and heatmaps are stored in Google Cloud Storage or as generic HTTP URLs.
-        For GCS URLs we use the GCS client; any non-GCS URL is treated as a normal HTTP resource.
+        Images and heatmaps are stored in S3 or as generic HTTP URLs.
+        For S3 URLs we use the S3 client; any non-S3 URL is treated as a normal HTTP resource.
         """
-        # GCS-hosted image
-        if "storage.googleapis.com" in image_url or image_url.startswith("gs://"):
-            from app.services.gcs_storage_service import download_image as gcs_download_image
-            file_data = gcs_download_image(image_url)
-            if not file_data:
-                raise Exception("GCS download returned no data")
+        from app.services.s3_storage_service import download_image as storage_download
+        file_data = storage_download(image_url)
+        if file_data:
             return file_data
-        
+
         # Any other URL – treat as public HTTP resource
         import requests
         response = requests.get(image_url, timeout=30)

@@ -10,6 +10,8 @@ import time
 import uuid
 import io
 import asyncio
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -22,6 +24,87 @@ from app.services.mysql_client_service import mysql_service
 from app.services.heatmap_visualization_service import heatmap_visualization_service
 
 logger = logging.getLogger(__name__)
+
+
+# --- CPU-bound analysis pool --------------------------------------------------
+# The core per-image analysis (`_analyze_image_healoncal_sync`) is CPU-bound and
+# uses enough pure-Python work that the GIL serialises it across threads. To
+# actually run the 3 angles in parallel we dispatch them into worker processes.
+
+_ANALYSIS_POOL: Optional[ProcessPoolExecutor] = None
+_ANALYSIS_POOL_WORKERS = int(os.getenv("HEALONCAL_ANALYSIS_WORKERS", "3"))
+
+
+def _get_analysis_pool() -> ProcessPoolExecutor:
+    global _ANALYSIS_POOL
+    if _ANALYSIS_POOL is None:
+        ctx = multiprocessing.get_context("spawn")
+        _ANALYSIS_POOL = ProcessPoolExecutor(
+            max_workers=_ANALYSIS_POOL_WORKERS,
+            mp_context=ctx,
+        )
+        logger.info(
+            "[HEALONCAL POOL] Initialized ProcessPoolExecutor with %d workers (spawn)",
+            _ANALYSIS_POOL_WORKERS,
+        )
+    return _ANALYSIS_POOL
+
+
+def _analyze_image_in_worker(image_data: bytes) -> HealoncalAnalysisResult:
+    """Run the sync analyzer inside a worker process, reusing a local service."""
+    svc = globals().get("_WORKER_SERVICE")
+    if svc is None:
+        svc = HealoncalService()
+        globals()["_WORKER_SERVICE"] = svc
+    return svc._analyze_image_healoncal_sync(image_data)
+
+
+def _warmup_worker() -> bool:
+    """No-op worker init to force interpreter/module load in each pool process."""
+    svc = globals().get("_WORKER_SERVICE")
+    if svc is None:
+        svc = HealoncalService()
+        globals()["_WORKER_SERVICE"] = svc
+    # Touch cv2 / numpy so they're loaded in the worker now, not on first request.
+    _ = cv2.__version__
+    _ = np.zeros((1, 1), dtype=np.uint8)
+    # Pre-load Haar cascade so the first real request doesn't hit disk.
+    _get_face_cascade()
+    return True
+
+
+# Module-level Haar cascade cache. Loading from disk every call costs ~10-30ms
+# and historically happened inside `_assess_image_quality` on every image.
+_FACE_CASCADE: Optional[cv2.CascadeClassifier] = None
+
+
+def _get_face_cascade() -> cv2.CascadeClassifier:
+    global _FACE_CASCADE
+    if _FACE_CASCADE is None:
+        _FACE_CASCADE = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        )
+    return _FACE_CASCADE
+
+
+# Maximum analysis resolution. Biomarker / metric calcs are all statistical
+# aggregates (mean, var, edge density) that stay stable at lower resolution,
+# but the cost scales with pixel count. For phone-camera images (~3-12MP)
+# downscaling to 512px short-side is a 10-50x speedup on cv2 ops like
+# Canny / HoughCircles / Laplacian / cornerHarris.
+_ANALYSIS_MAX_DIM = int(os.getenv("HEALONCAL_ANALYSIS_MAX_DIM", "512"))
+
+
+def _maybe_downscale(image_np: np.ndarray) -> np.ndarray:
+    if image_np is None or image_np.size == 0:
+        return image_np
+    h, w = image_np.shape[:2]
+    longest = max(h, w)
+    if longest <= _ANALYSIS_MAX_DIM:
+        return image_np
+    scale = _ANALYSIS_MAX_DIM / float(longest)
+    new_size = (max(1, int(round(w * scale))), max(1, int(round(h * scale))))
+    return cv2.resize(image_np, new_size, interpolation=cv2.INTER_AREA)
 
 
 class HealoncalService:
@@ -135,7 +218,7 @@ class HealoncalService:
                 conn.close()
     
     async def capture_image(self, session_id: str, user_id: str, angle: str, image_data: bytes) -> Dict[str, Any]:
-        """Capture and store image for Healoncal analysis. Image file in GCS, metadata in MySQL."""
+        """Capture and store image for Healoncal analysis. Image file in S3, metadata in MySQL."""
         try:
             db = self._get_db()
             if not db.is_available():
@@ -145,17 +228,24 @@ class HealoncalService:
             file_path = f"users/{user_id}/healoncal/{session_id}/{angle}_{timestamp}.jpg"
             logger.info("[HEALONCAL STORAGE] Storing image at path: %s", file_path)
 
-            from app.services.gcs_storage_service import upload_image as gcs_upload_image
-            from app.services.gcs_storage_service import delete_object_key as gcs_delete_key
-            from app.services.gcs_storage_service import get_signed_url as gcs_presign
+            from app.services.s3_storage_service import upload_image as s3_upload_image
+            from app.services.s3_storage_service import delete_object_key as s3_delete_key
+            from app.services.s3_storage_service import get_signed_url as s3_presign
             try:
-                image_url = gcs_upload_image(file_path, image_data, content_type="image/jpeg")
+                # S3 upload + quality assessment are both blocking + CPU work.
+                # Run them in the thread pool concurrently so three capture_image
+                # calls fired via asyncio.gather actually overlap instead of
+                # serialising on the event loop.
+                image_url, (image_quality_score, face_detected) = await asyncio.gather(
+                    asyncio.to_thread(
+                        s3_upload_image, file_path, image_data, "image/jpeg"
+                    ),
+                    asyncio.to_thread(self._assess_image_quality, image_data),
+                )
                 logger.info("[HEALONCAL STORAGE] Image URL generated: %s", image_url)
             except Exception as storage_error:
-                logger.error("[HEALONCAL ERROR] GCS storage upload failed: %s", storage_error)
+                logger.error("[HEALONCAL ERROR] S3 storage upload failed: %s", storage_error)
                 raise
-
-            image_quality_score, face_detected = self._assess_image_quality(image_data)
             image_record = {
                 "session_id": session_id,
                 "user_id": user_id,
@@ -170,8 +260,8 @@ class HealoncalService:
                     raise RuntimeError("Insert returned no id for healoncal_captured_images")
                 logger.info("[HEALONCAL DATABASE] Image record stored with ID: %s", image_id)
             except Exception as db_error:
-                logger.error("[HEALONCAL ERROR] DB insert failed after GCS upload; rolling back object: %s", db_error)
-                gcs_delete_key(file_path)
+                logger.error("[HEALONCAL ERROR] DB insert failed after S3 upload; rolling back object: %s", db_error)
+                s3_delete_key(file_path)
                 return {
                     "success": False,
                     "error": "Could not save image metadata. S3 upload was reverted. Retry capture.",
@@ -190,7 +280,7 @@ class HealoncalService:
             # Generate a signed URL for client display so that images remain
             # in a private bucket but are still viewable in the browser.
             try:
-                display_url = gcs_presign(image_url) if image_url else image_url
+                display_url = s3_presign(image_url) if image_url else image_url
             except Exception as sign_err:
                 logger.warning("[HEALONCAL WARNING] Failed to generate signed URL for image: %s", sign_err)
                 display_url = image_url
@@ -556,19 +646,50 @@ class HealoncalService:
             def fetch_heatmaps():
                 return db.fetch_all("SELECT * FROM disease_heatmaps WHERE session_id = %s", (session_id,))
 
+            def fetch_captured():
+                return db.fetch_all(
+                    "SELECT * FROM healoncal_captured_images WHERE session_id = %s ORDER BY id ASC",
+                    (session_id,),
+                )
+
             overall_start = time.time()
             (
                 individual_results,
                 detected_diseases,
                 treatment_recommendations,
                 heatmap_results,
+                captured_images,
             ) = await asyncio.gather(
                 asyncio.to_thread(fetch_individual),
                 asyncio.to_thread(fetch_diseases),
                 asyncio.to_thread(fetch_recommendations),
                 asyncio.to_thread(fetch_heatmaps),
+                asyncio.to_thread(fetch_captured),
             )
             logger.info("[HEALONCAL RESULTS] All result queries completed in %.3fs", time.time() - overall_start)
+
+            # Attach a presigned captured-image URL per individual_result so the
+            # report UI can render the user's own photo (not a placeholder).
+            try:
+                from app.services.s3_storage_service import get_signed_url as s3_presign
+                by_angle_latest = {}
+                for img in (captured_images or []):
+                    a = (img.get("angle") or "").lower()
+                    if a:
+                        by_angle_latest[a] = img  # last write wins → latest id
+                for res in (individual_results or []):
+                    a = (res.get("angle") or "").lower()
+                    img = by_angle_latest.get(a)
+                    if not img:
+                        continue
+                    raw_url = img.get("image_url") or ""
+                    try:
+                        display_url = s3_presign(raw_url) if raw_url else raw_url
+                    except Exception:
+                        display_url = raw_url
+                    res["captured_image_url"] = display_url
+            except Exception as e:
+                logger.warning("[HEALONCAL RESULTS] Failed to attach captured image URLs: %s", e)
 
             return {
                 "success": True,
@@ -578,6 +699,7 @@ class HealoncalService:
                 "detected_diseases": detected_diseases or [],
                 "treatment_recommendations": treatment_recommendations[0] if treatment_recommendations else None,
                 "heatmap_results": heatmap_results or [],
+                "captured_images": captured_images or [],
             }
         except Exception as e:
             logger.error("[HEALONCAL ERROR] Failed to get results: %s", e)
@@ -606,8 +728,8 @@ class HealoncalService:
             if 50 <= mean_brightness <= 200:
                 quality_score += 15
             
-            # Simple face detection
-            face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+            # Simple face detection (cascade is cached at module level)
+            face_cascade = _get_face_cascade()
             faces = face_cascade.detectMultiScale(gray, 1.1, 4)
             face_detected = len(faces) > 0
             
@@ -619,7 +741,35 @@ class HealoncalService:
         except Exception as e:
             logger.warning(f"[HEALONCAL WARNING] Quality assessment failed: {e}")
             return 30.0, False
-    
+
+    def _assess_quality_from_np(self, image_np: np.ndarray) -> tuple[float, bool]:
+        """Quality assessment from an already-decoded (and possibly downscaled) array.
+        Avoids re-decoding the original JPEG during analysis, which doubled cv2 work.
+        """
+        try:
+            quality_score = 50.0
+            height, width = image_np.shape[:2]
+            if min(height, width) >= 512:
+                quality_score += 20
+            elif min(height, width) >= 256:
+                quality_score += 10
+
+            gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY) if image_np.ndim == 3 else image_np
+            mean_brightness = float(np.mean(gray))
+            if 50 <= mean_brightness <= 200:
+                quality_score += 15
+
+            face_cascade = _get_face_cascade()
+            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+            face_detected = len(faces) > 0
+            if face_detected:
+                quality_score += 15
+
+            return min(100.0, quality_score), face_detected
+        except Exception as e:
+            logger.warning(f"[HEALONCAL WARNING] Quality assessment (np) failed: {e}")
+            return 30.0, False
+
     def _analyze_image_healoncal_sync(self, image_data: bytes) -> HealoncalAnalysisResult:
         """
         Synchronous Healoncal medical-grade skin analysis (CPU-bound).
@@ -633,15 +783,25 @@ class HealoncalService:
             # Convert to image with error handling
             try:
                 image = Image.open(io.BytesIO(image_data))
+                if image.mode != "RGB":
+                    image = image.convert("RGB")
                 image_np = np.array(image)
-                logger.info(f"[HEALONCAL] Image converted successfully - Shape: {image_np.shape}")
+                original_shape = image_np.shape
+                image_np = _maybe_downscale(image_np)
+                if image_np.shape != original_shape:
+                    logger.info(
+                        f"[HEALONCAL] Image downscaled for analysis - {original_shape} -> {image_np.shape}"
+                    )
+                else:
+                    logger.info(f"[HEALONCAL] Image converted successfully - Shape: {image_np.shape}")
             except Exception as e:
                 logger.error(f"[HEALONCAL ERROR] Image conversion failed: {e}")
                 raise Exception(f"Image conversion failed: {e}")
             
-            # LIQA Assessment with error handling
+            # LIQA Assessment with error handling — operate on the already-decoded
+            # (possibly downscaled) array to avoid a second JPEG decode per image.
             try:
-                quality_score, face_detected = self._assess_image_quality(image_data)
+                quality_score, face_detected = self._assess_quality_from_np(image_np)
                 logger.info(f"[HEALONCAL] Quality assessment - Score: {quality_score:.1f}, Face: {face_detected}")
             except Exception as e:
                 logger.error(f"[HEALONCAL ERROR] Quality assessment failed: {e}")
@@ -740,9 +900,13 @@ class HealoncalService:
     async def _analyze_image_healoncal(self, image_data: bytes) -> HealoncalAnalysisResult:
         """
         Perform Healoncal medical-grade skin analysis.
-        Runs CPU-bound work in thread pool so multiple images can be analyzed in parallel.
+        Runs CPU-bound work in a process pool so multiple images analyze truly in
+        parallel (threads would be serialised by the GIL for this workload).
         """
-        return await asyncio.to_thread(self._analyze_image_healoncal_sync, image_data)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            _get_analysis_pool(), _analyze_image_in_worker, image_data
+        )
     
     def _get_fallback_metrics(self) -> Dict[str, float]:
         """Get fallback metrics when analysis fails."""
@@ -1625,20 +1789,17 @@ class HealoncalService:
         """
         Download image data.
         
-        For GCS URLs, we use the GCS client when possible.
+        For S3 URLs, we use the S3 client.
         For any other URL type, we fall back to a direct HTTP GET.
         """
         logger.info(f"[HEALONCAL DOWNLOAD] Downloading image from: {image_url}")
-        
-        # GCS-hosted image
-        if "storage.googleapis.com" in image_url or image_url.startswith("gs://"):
-            from app.services.gcs_storage_service import download_image as gcs_download_image
-            file_data = gcs_download_image(image_url)
-            if not file_data:
-                raise Exception("GCS download returned no data")
-            logger.info(f"[HEALONCAL DOWNLOAD] Downloaded {len(file_data)} bytes from GCS")
+
+        from app.services.s3_storage_service import download_image as storage_download
+        file_data = storage_download(image_url)
+        if file_data:
+            logger.info(f"[HEALONCAL DOWNLOAD] Downloaded {len(file_data)} bytes via storage SDK")
             return file_data
-        
+
         # Any other URL – treat as public HTTP resource
         import requests
         response = requests.get(image_url, timeout=30)

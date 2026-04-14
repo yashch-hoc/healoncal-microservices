@@ -226,6 +226,59 @@ class MySQLClientService:
             if conn:
                 conn.close()
 
+    def bulk_insert(self, table: str, rows: List[Dict[str, Any]]) -> List[str]:
+        """
+        INSERT many rows in a single statement via executemany. Returns ids in
+        the same order as input rows. Rows are serialized the same way as
+        `insert(...)`. UUIDs are generated for tables in `tables_with_uuid_id`
+        when `id` is missing.
+        """
+        if not self._available:
+            raise RuntimeError("MySQL is not configured")
+        if not rows:
+            return []
+        tables_with_uuid_id = [
+            "healoncal_analysis_sessions", "healoncal_captured_images",
+            "healoncal_analysis_results",
+            "treatment_recommendations", "detected_skin_diseases", "disease_heatmaps",
+        ]
+        prepared_rows: List[Dict[str, Any]] = []
+        ids: List[str] = []
+        for row in rows:
+            r = dict(row)
+            if table in tables_with_uuid_id and "id" not in r:
+                r["id"] = str(uuid.uuid4())
+            prepared = _row_for_insert(table, r)
+            if not prepared:
+                continue
+            prepared_rows.append(prepared)
+            ids.append(prepared.get("id", ""))
+        if not prepared_rows:
+            return []
+        # All rows must share the same column set for executemany.
+        cols = list(prepared_rows[0].keys())
+        col_set = set(cols)
+        params_list = []
+        for p in prepared_rows:
+            if set(p.keys()) != col_set:
+                # Fall back to single inserts for heterogeneous shapes.
+                logger.warning("[MYSQL] bulk_insert heterogeneous rows; falling back to per-row inserts")
+                return [self.insert(table, p) or "" for p in prepared_rows]
+            params_list.append(tuple(p[c] for c in cols))
+        sql = (
+            f"INSERT INTO {table} ({', '.join(cols)}) "
+            f"VALUES ({', '.join(['%s'] * len(cols))})"
+        )
+        conn = None
+        try:
+            conn = self.get_connection()
+            with conn.cursor() as cur:
+                cur.executemany(sql, params_list)
+            return ids
+        finally:
+            if conn:
+                conn.close()
+
     def update(self, table: str, set_dict: Dict[str, Any], where_col: str, where_val: Any) -> int:
         """UPDATE table SET ... WHERE where_col = where_val. set_dict values are serialized for JSON/bool."""
         if not self._available:

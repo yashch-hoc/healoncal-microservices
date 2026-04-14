@@ -36,12 +36,15 @@ class Settings(BaseSettings):
         description="Optional Cloud SQL Unix socket path, e.g. /cloudsql/PROJECT:REGION:INSTANCE",
     )
     
-    # Google Cloud Storage settings (for image storage; metadata and results in MySQL)
-    GCS_BUCKET_NAME: str = Field(default="", description="GCS bucket name for skin scan images")
-    GCS_SKIN_SCANS_PREFIX: str = Field(
-        default="skin-scans",
-        description="Prefix/folder in GCS bucket for skin scan images"
-    )
+    # AWS S3 settings (image storage; metadata and results in MySQL).
+    # Legacy GCS_* aliases are kept so existing callers/env files still work.
+    S3_BUCKET_NAME: str = Field(default="", description="S3 bucket name for skin scan images")
+    S3_PREFIX: str = Field(default="skin-scans", description="Object key prefix in S3")
+    AWS_REGION: str = Field(default="ap-south-1", description="AWS region for S3")
+
+    # Legacy (unused by the S3 backend; preserved to avoid breaking old .envs)
+    GCS_BUCKET_NAME: str = Field(default="", description="[deprecated] alias for S3_BUCKET_NAME")
+    GCS_SKIN_SCANS_PREFIX: str = Field(default="skin-scans", description="[deprecated] alias for S3_PREFIX")
 
     # Storage settings
     STORAGE_DIR: str = Field(

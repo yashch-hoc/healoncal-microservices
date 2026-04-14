@@ -50,8 +50,24 @@ async def lifespan(app: FastAPI):
     
     logger.info("📊 Loading medical-grade analysis models...")
     logger.info("🔬 Initializing Healoncal analysis service...")
+
+    # Pre-warm the CPU-bound analysis process pool and its workers so the first
+    # /submit-and-analyze request doesn't pay spawn + cv2/numpy import latency.
+    try:
+        from app.services.healoncal_service import _get_analysis_pool, _warmup_worker
+        pool = _get_analysis_pool()
+        warmup_futures = [pool.submit(_warmup_worker) for _ in range(pool._max_workers)]
+        for f in warmup_futures:
+            try:
+                f.result(timeout=60)
+            except Exception as werr:
+                logger.warning("[HEALONCAL POOL] Warmup task failed: %s", werr)
+        logger.info("🔥 Analysis process pool warmed up (%d workers)", pool._max_workers)
+    except Exception as e:
+        logger.warning("⚠️ Analysis pool warmup skipped: %s", e)
+
     logger.info("✅ Healoncal application startup complete")
-    
+
     yield
     
     # Shutdown

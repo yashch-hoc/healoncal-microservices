@@ -450,4 +450,8 @@ Respond in this JSON format:
 
 # Global instance
 gemini_recommendation_service = GeminiRecommendationService()
+try:
+    gemini_recommendation_service._ensure_initialized()
+except Exception as _e:
+    logger.warning("[GEMINI] Eager init skipped: %s", _e)
     

@@ -175,9 +175,9 @@ class TreatmentStorageService:
             if not mysql_service.is_available():
                 raise Exception("MySQL not configured - cannot store diseases")
 
-            disease_ids = []
+            records = []
             for disease in detected_diseases:
-                record = {
+                records.append({
                     "session_id": session_id,
                     "analysis_result_id": analysis_result_id,
                     "user_id": user_id,
@@ -204,10 +204,10 @@ class TreatmentStorageService:
                     "notes": "Detected via automated analysis with {:.1%} confidence".format(
                         make_json_safe(disease.get("confidence", 0.0))
                     ),
-                }
-                did = mysql_service.insert("detected_skin_diseases", record)
-                if did:
-                    disease_ids.append(did)
+                })
+            # Single multi-row INSERT instead of N round-trips.
+            disease_ids = mysql_service.bulk_insert("detected_skin_diseases", records)
+            disease_ids = [d for d in disease_ids if d]
             logger.info("[DISEASE STORAGE] Stored %s diseases for session %s", len(disease_ids), session_id)
             return disease_ids
         except Exception as e:

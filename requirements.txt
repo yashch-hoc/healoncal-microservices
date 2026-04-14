@@ -8,7 +8,7 @@ httpx
 aiohttp
 beautifulsoup4
 PyMySQL
-google-cloud-storage
+boto3
 opencv-python-headless
 torch
 torchvision

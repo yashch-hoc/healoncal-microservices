@@ -25,8 +25,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements first for better Docker layer caching
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install Python dependencies.
+# Install CPU-only PyTorch first (from the dedicated CPU wheel index) so we
+# don't pull multi-GB CUDA libs on a CPU-only host.
 RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
+        torch torchvision && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
@@ -41,11 +45,6 @@ RUN mkdir -p /root/.cache/huggingface/transformers && \
 
 # Ensure Python can find the app module
 ENV PYTHONPATH=/app:$PYTHONPATH
-
-# Debug: Check module structure
-RUN python -c "import sys; print('Python path:', sys.path)" && \
-    ls -la /app/app/models/ && \
-    python -c "import app.models; print('app.models imported successfully')"
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
