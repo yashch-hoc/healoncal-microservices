@@ -33,19 +33,36 @@ logger = logging.getLogger(__name__)
 
 _ANALYSIS_POOL: Optional[ProcessPoolExecutor] = None
 _ANALYSIS_POOL_WORKERS = int(os.getenv("HEALONCAL_ANALYSIS_WORKERS", "3"))
+# Recycle each worker after N tasks so cv2/numpy arena growth is bounded even
+# if a small leak exists somewhere. 0 = never recycle.
+_ANALYSIS_POOL_MAX_TASKS = int(os.getenv("HEALONCAL_ANALYSIS_MAX_TASKS_PER_CHILD", "50"))
 
 
 def _get_analysis_pool() -> ProcessPoolExecutor:
     global _ANALYSIS_POOL
     if _ANALYSIS_POOL is None:
         ctx = multiprocessing.get_context("spawn")
-        _ANALYSIS_POOL = ProcessPoolExecutor(
-            max_workers=_ANALYSIS_POOL_WORKERS,
-            mp_context=ctx,
-        )
+        kwargs: Dict[str, Any] = {
+            "max_workers": _ANALYSIS_POOL_WORKERS,
+            "mp_context": ctx,
+        }
+        # max_tasks_per_child is Python 3.11+. We're on 3.12, so this is safe;
+        # guard anyway for older environments.
+        if _ANALYSIS_POOL_MAX_TASKS > 0:
+            try:
+                _ANALYSIS_POOL = ProcessPoolExecutor(
+                    **kwargs,
+                    max_tasks_per_child=_ANALYSIS_POOL_MAX_TASKS,
+                )
+            except TypeError:
+                _ANALYSIS_POOL = ProcessPoolExecutor(**kwargs)
+        else:
+            _ANALYSIS_POOL = ProcessPoolExecutor(**kwargs)
         logger.info(
-            "[HEALONCAL POOL] Initialized ProcessPoolExecutor with %d workers (spawn)",
+            "[HEALONCAL POOL] Initialized ProcessPoolExecutor "
+            "workers=%d max_tasks_per_child=%d (spawn)",
             _ANALYSIS_POOL_WORKERS,
+            _ANALYSIS_POOL_MAX_TASKS,
         )
     return _ANALYSIS_POOL
 
@@ -87,12 +104,17 @@ def _get_face_cascade() -> cv2.CascadeClassifier:
     return _FACE_CASCADE
 
 
-# Maximum analysis resolution. Biomarker / metric calcs are all statistical
-# aggregates (mean, var, edge density) that stay stable at lower resolution,
-# but the cost scales with pixel count. For phone-camera images (~3-12MP)
-# downscaling to 512px short-side is a 10-50x speedup on cv2 ops like
-# Canny / HoughCircles / Laplacian / cornerHarris.
-_ANALYSIS_MAX_DIM = int(os.getenv("HEALONCAL_ANALYSIS_MAX_DIM", "512"))
+# Maximum analysis resolution (longest side). Biomarker / metric calcs are
+# statistical aggregates that stay stable at moderate resolutions, but the
+# cost scales with pixel count. We keep images at 1024px — high enough to
+# preserve pore / fine-line / texture signal, but bounded enough to run in
+# ~2-3s per image on CPU. Override via env for A/B tests.
+#
+# The actual decode uses PIL `Image.draft("RGB", (W, H))` which lets the
+# JPEG decoder read only as many DCT coefficients as needed for the target
+# size — this is where the memory saving comes from (no full-res buffer is
+# ever materialised) even when the incoming photo is 3-12 MP.
+_ANALYSIS_MAX_DIM = int(os.getenv("HEALONCAL_ANALYSIS_MAX_DIM", "1024"))
 
 
 def _maybe_downscale(image_np: np.ndarray) -> np.ndarray:
@@ -780,12 +802,31 @@ class HealoncalService:
         try:
             logger.info(f"[HEALONCAL] Starting image analysis - {len(image_data)} bytes")
             
-            # Convert to image with error handling
+            # Convert to image with error handling.
+            #
+            # We use `Image.draft("RGB", (max, max))` BEFORE materialising the
+            # pixels. For JPEG sources this hands the decoder a target size
+            # and it reads only the DCT coefficients it needs — so we never
+            # allocate a full-resolution buffer in RAM. After draft() the
+            # image may still be slightly larger than the cap (it rounds to
+            # native JPEG subsample factors 1/2, 1/4, 1/8), so we follow up
+            # with `_maybe_downscale` to hit the exact bound.
             try:
                 image = Image.open(io.BytesIO(image_data))
+                try:
+                    image.draft("RGB", (_ANALYSIS_MAX_DIM, _ANALYSIS_MAX_DIM))
+                except Exception:
+                    # draft() is a hint — not all formats support it; ignore.
+                    pass
                 if image.mode != "RGB":
                     image = image.convert("RGB")
                 image_np = np.array(image)
+                # Free the PIL handle — we only need the numpy view from here.
+                try:
+                    image.close()
+                except Exception:
+                    pass
+                del image
                 original_shape = image_np.shape
                 image_np = _maybe_downscale(image_np)
                 if image_np.shape != original_shape:

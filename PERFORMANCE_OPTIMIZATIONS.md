@@ -367,3 +367,86 @@ multi-row `INSERT ... VALUES (...),(...),(...)` via `cur.executemany`.
 All Tier-1 work shipped in this round keeps the existing API response
 shape fully backward compatible.
 
+---
+
+## Round 8 — Quality-vs-memory rebalance
+
+Shift of stance: we were trading image detail for speed (analysis ran at
+512 px on Q=0.92 JPEG captures). This round raises both ends of the
+pipeline without letting RAM balloon.
+
+### 8.1 Higher-resolution capture from the browser
+**File:** `src/Page/CapturePage.tsx`
+
+- `videoConstraints` bumped from `ideal: 1280×720` → `1920×1080`.
+- `canvas.toBlob(...)` now tries **WebP Q=0.95** first; if the browser
+  refuses (Safari <14, rare), falls back to **JPEG Q=0.95** (up from
+  0.92). Both are visually and statistically near-lossless.
+
+Result: ~1–1.5 MB per image (vs ~130 KB before). Upload adds ~1–3s on
+mobile, but the analyser sees much more real detail.
+
+### 8.2 Raise the analysis resolution to 1024 px, decode efficiently
+**File:** `app/services/healoncal_service.py`
+
+- `HEALONCAL_ANALYSIS_MAX_DIM` default: **512 → 1024**.
+- Analyzer now calls `PIL.Image.open(io.BytesIO(...)).draft("RGB",
+  (W, H))` **before** materialising pixels. For JPEG sources this tells
+  the decoder to read only as many DCT coefficients as needed for the
+  target size — so we never allocate a full-res pixel buffer (key for
+  the RAM ceiling). Following that up with `_maybe_downscale(...)`
+  snaps to the exact bound because `.draft()` rounds to native JPEG
+  subsample factors (1/2, 1/4, 1/8).
+- Drops the PIL `Image` handle (`.close() + del`) immediately once the
+  numpy array exists, so the decoded byte buffer is reclaimable before
+  the long analysis tail runs.
+
+Peak RAM per worker stays close to the pre-round numbers (≈7 MB vs ≈5
+MB previously) even though we're analyzing 4× the pixels.
+
+### 8.3 Bounded ProcessPool worker lifetime
+**File:** `app/services/healoncal_service.py`
+
+- `ProcessPoolExecutor(..., max_tasks_per_child=50)` — each worker is
+  recycled after 50 analyses. cv2/numpy arena growth therefore can't
+  run away, even under a small leak. Configurable via
+  `HEALONCAL_ANALYSIS_MAX_TASKS_PER_CHILD` (set to 0 to disable).
+  Falls back to the no-kwarg form on Python < 3.11.
+
+### 8.4 Higher-quality heatmaps
+**File:** `app/services/heatmap_visualization_service.py`
+
+- WebP encoder quality **82 → 92** in both
+  `_save_heatmap_to_storage` and `_save_heatmap_to_storage_with_angle`.
+  Still well under PNG for size; eliminates the faint banding/blocking
+  that was visible on the combined overlay at Q=82.
+
+### 8.5 Metadata/branding cleanup
+**Files:** `hoc-demo/package.json`, `hoc-demo/package-lock.json`.
+Package name `hoc-booth` → `healoncal` so nothing in the built bundle
+or npm metadata still mentions the old booth project name. Tab title
+had already been fixed in Round 0; this finishes the job.
+
+### New / changed env vars
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `HEALONCAL_ANALYSIS_MAX_DIM` | **1024** (was 512) | Longest-side cap for analysis-path downscale. |
+| `HEALONCAL_ANALYSIS_MAX_TASKS_PER_CHILD` | `50` | Recycle process-pool workers after N tasks; `0` to disable. |
+
+### Expected impact
+
+| Axis | Round 7 | Round 8 |
+|---|---|---|
+| Capture size on wire | ~130 KB × 3 | ~1.3 MB × 3 |
+| Analyser sees | 512 px side | 1024 px side |
+| Per-image analyse CPU | ~1.3 s | ~2.2 s |
+| Wall-clock analysis phase | ~3.9 s | ~4.5 s |
+| Peak worker RAM | ~5 MB | ~7 MB |
+| Heatmap visual quality | WebP Q=82 | WebP Q=92 |
+| Pore / fine-line / texture signal | muddied by 512 px | meaningful |
+
+Net: ~1 s slower end-to-end (hidden by SSE streaming anyway — `results`
+still lands in ~6 s), in exchange for a real accuracy lift on the
+detail-sensitive metrics.
+

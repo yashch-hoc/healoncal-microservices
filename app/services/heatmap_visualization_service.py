@@ -920,7 +920,7 @@ class HeatMapVisualizationService:
             img_buffer = io.BytesIO()
             if heatmap_image.mode not in ("RGB", "RGBA"):
                 heatmap_image = heatmap_image.convert("RGBA")
-            heatmap_image.save(img_buffer, format="WEBP", quality=82, method=4)
+            heatmap_image.save(img_buffer, format="WEBP", quality=92, method=4)
             img_bytes = img_buffer.getvalue()
 
             import time
@@ -1317,7 +1317,7 @@ class HeatMapVisualizationService:
             img_buffer = io.BytesIO()
             if heatmap_image.mode not in ("RGB", "RGBA"):
                 heatmap_image = heatmap_image.convert("RGBA")
-            heatmap_image.save(img_buffer, format="WEBP", quality=82, method=4)
+            heatmap_image.save(img_buffer, format="WEBP", quality=92, method=4)
             img_bytes = img_buffer.getvalue()
 
             import time
