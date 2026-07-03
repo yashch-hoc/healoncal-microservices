@@ -91,7 +91,11 @@ class Settings(BaseSettings):
         default="pytorch-inference-2026-03-14-17-07-36-902",
         description="SageMaker endpoint for the hyperpigmentation segmentation model"
     )
-    
+    SAGEMAKER_AGING_ENDPOINT_NAME: str = Field(
+        default="healoncal-aging-20260504-060553",
+        description="SageMaker endpoint for the early aging detection model (Glogau/texture/wrinkles)"
+    )
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

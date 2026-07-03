@@ -21,7 +21,7 @@ from app.services.bedrock_recommendation_service import bedrock_recommendation_s
 from app.services.treatment_storage_service import treatment_storage_service
 from app.services.metrics_service import metrics_service
 from app.services.report_chat_service import report_chat_service
-from app.services.s3_storage_service import get_signed_url as s3_presign
+from app.services.s3_storage_service import get_signed_url as s3_presign, download_image as s3_download_image
 from app.services import sagemaker_inference_service as sagemaker_inference
 
 logger = logging.getLogger(__name__)
@@ -267,6 +267,20 @@ async def detect_hyperpigmentation_route(
     result = await sagemaker_inference.detect_hyperpigmentation(image_bytes, preprocess=do_preprocess)
     if not result.get("success"):
         raise HTTPException(status_code=502, detail=f"Hyperpigmentation detection failed: {result.get('error')}")
+    return result["data"]
+
+
+@router.post("/detect/aging")
+async def detect_aging_route(image: UploadFile = File(...)):
+    """
+    Run the SageMaker early-aging model on a single uploaded image.
+    Returns the raw SageMaker response (aging_analysis: glogau, texture,
+    wrinkles, composite; plus mask_b64, disclaimer).
+    """
+    image_bytes = await _read_image_upload(image, "image")
+    result = await sagemaker_inference.detect_aging(image_bytes)
+    if not result.get("success"):
+        raise HTTPException(status_code=502, detail=f"Aging detection failed: {result.get('error')}")
     return result["data"]
 
 
@@ -1452,7 +1466,39 @@ async def complete_analysis(request: CompleteAnalysisRequest):
 
             heatmaps_payload = await _fetch_heatmaps_for_session(session_id)
 
-            init_payload = {"results": results_payload, "heatmaps": heatmaps_payload}
+            # Run the SageMaker models (acne / hyperpigmentation / aging) per
+            # angle on the captured images, and presign the images so the report
+            # can show the user's own photos next to the model-derived data.
+            detections_by_angle: Dict[str, Any] = {}
+            captured_images: Dict[str, Any] = {}
+
+            async def _detect_for_angle(image_record: Dict[str, Any]) -> None:
+                angle = str(image_record.get("angle") or "").lower()
+                url = image_record.get("image_url")
+                if not angle or not url:
+                    return
+                captured_images[angle] = s3_presign(url) or url
+                try:
+                    img_bytes = await asyncio.to_thread(s3_download_image, url)
+                    if not img_bytes:
+                        detections_by_angle[angle] = {"success": False, "error": "image download failed"}
+                        return
+                    detections_by_angle[angle] = await sagemaker_inference.run_all(img_bytes)
+                except Exception as det_err:
+                    logger.warning("[COMPLETE-ANALYSIS] detection failed for %s: %s", angle, det_err)
+                    detections_by_angle[angle] = {"success": False, "error": str(det_err)}
+
+            try:
+                await asyncio.gather(*[_detect_for_angle(im) for im in images])
+            except Exception as det_all_err:
+                logger.warning("[COMPLETE-ANALYSIS] detection batch failed: %s", det_all_err)
+
+            init_payload = {
+                "results": results_payload,
+                "heatmaps": heatmaps_payload,
+                "detections": detections_by_angle,
+                "captured_images": captured_images,
+            }
             yield _sse_event("init", init_payload)
 
             # 4) Optionally stream recommendations
@@ -1493,6 +1539,8 @@ async def complete_analysis(request: CompleteAnalysisRequest):
                 "results": results_payload,
                 "heatmaps": heatmaps_payload,
                 "recommendations": recommendations_payload,
+                "detections": detections_by_angle,
+                "captured_images": captured_images,
             }
             yield _sse_event("done", done_payload)
 
