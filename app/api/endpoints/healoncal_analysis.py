@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.services.healoncal_service import healoncal_service
-from app.services.gemini_recommendation_service import gemini_recommendation_service
+from app.services.bedrock_recommendation_service import bedrock_recommendation_service as recommendation_service
 from app.services.treatment_storage_service import treatment_storage_service
 from app.services.metrics_service import metrics_service
 from app.services.report_chat_service import report_chat_service
@@ -473,7 +473,7 @@ async def get_heatmap_visualizations(session_id: str):
                     },
                 }
 
-                return await gemini_recommendation_service.generate_product_recommendations(
+                return await recommendation_service.generate_product_recommendations(
                     formatted_results,
                     user_preferences=None,
                 )
@@ -621,7 +621,7 @@ async def submit_and_analyze(
 
         async def gemini_task():
             try:
-                return await gemini_recommendation_service.generate_product_recommendations(
+                return await recommendation_service.generate_product_recommendations(
                     formatted_results,
                     user_preferences=None,
                 )
@@ -809,7 +809,7 @@ async def submit_and_analyze_stream(
             if include_recs:
                 async def _gemini():
                     try:
-                        return await gemini_recommendation_service.generate_product_recommendations(
+                        return await recommendation_service.generate_product_recommendations(
                             formatted_results, user_preferences=None
                         )
                     except Exception as rec_err:
@@ -1238,7 +1238,7 @@ async def get_product_recommendations(request: RecommendationRequest):
         }
         
         # Generate recommendations using Gemini AI
-        recommendations = await gemini_recommendation_service.generate_product_recommendations(
+        recommendations = await recommendation_service.generate_product_recommendations(
             formatted_results, 
             request.user_preferences
         )
@@ -1388,7 +1388,7 @@ async def complete_analysis(request: CompleteAnalysisRequest):
                             "combined_analysis": results.get("combined_results"),
                         },
                     }
-                    recs = await gemini_recommendation_service.generate_product_recommendations(
+                    recs = await recommendation_service.generate_product_recommendations(
                         formatted, None
                     )
                     # Emit a single text chunk so the UI can show something as recs are ready.

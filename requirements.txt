@@ -9,7 +9,7 @@ aiohttp
 beautifulsoup4
 PyMySQL
 boto3
-opencv-python-headless
+opencv-python-headless==4.13.0.92
 torch
 torchvision
 transformers
@@ -27,6 +27,8 @@ google-auth
 google-auth-oauthlib
 google-auth-httplib2
 seaborn
+openai>=2.44.0,<3
+aws-bedrock-token-generator>=1.1.0,<2
 
 
 
