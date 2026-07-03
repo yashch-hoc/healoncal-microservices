@@ -77,6 +77,20 @@ class Settings(BaseSettings):
         default="gemini-1.5-flash",
         description="Gemini model to use for analysis summarization"
     )
+
+    # SageMaker inference endpoints (ap-south-1). Empty string disables the call.
+    SAGEMAKER_REGION: str = Field(
+        default="ap-south-1",
+        description="AWS region where the SageMaker inference endpoints live"
+    )
+    SAGEMAKER_ACNE_ENDPOINT_NAME: str = Field(
+        default="acne-detection-6class-endpoint",
+        description="SageMaker endpoint for the acne detection model"
+    )
+    SAGEMAKER_HYPERPIG_ENDPOINT_NAME: str = Field(
+        default="pytorch-inference-2026-03-14-17-07-36-902",
+        description="SageMaker endpoint for the hyperpigmentation segmentation model"
+    )
     
     class Config:
         env_file = ".env"

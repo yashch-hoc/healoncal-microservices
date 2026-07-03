@@ -17,11 +17,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.services.healoncal_service import healoncal_service
-from app.services.gemini_recommendation_service import gemini_recommendation_service
+from app.services.bedrock_recommendation_service import bedrock_recommendation_service as recommendation_service
 from app.services.treatment_storage_service import treatment_storage_service
 from app.services.metrics_service import metrics_service
 from app.services.report_chat_service import report_chat_service
 from app.services.s3_storage_service import get_signed_url as s3_presign
+from app.services import sagemaker_inference_service as sagemaker_inference
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -227,6 +228,46 @@ async def diagnostic_schema():
         return diagnostics
     except Exception as e:
         return {"error": str(e)}
+
+
+async def _read_image_upload(u: UploadFile, name: str = "image") -> bytes:
+    ct = u.content_type or ""
+    if not ct.startswith("image/"):
+        raise HTTPException(status_code=400, detail=f"Invalid file type for {name}: {ct}. Expected image.")
+    data = await u.read()
+    if not data:
+        raise HTTPException(status_code=400, detail=f"Empty file for {name}.")
+    return data
+
+
+@router.post("/detect/acne")
+async def detect_acne_route(image: UploadFile = File(...)):
+    """
+    Run the SageMaker acne detection model on a single uploaded image.
+    Returns the raw SageMaker response (boxes, scores, severity, annotated_image, ...).
+    """
+    image_bytes = await _read_image_upload(image, "image")
+    result = await sagemaker_inference.detect_acne(image_bytes)
+    if not result.get("success"):
+        raise HTTPException(status_code=502, detail=f"Acne detection failed: {result.get('error')}")
+    return result["data"]
+
+
+@router.post("/detect/hyperpigmentation")
+async def detect_hyperpigmentation_route(
+    image: UploadFile = File(...),
+    preprocess: str = Form("true"),
+):
+    """
+    Run the SageMaker hyperpigmentation segmentation model on a single uploaded image.
+    Returns the raw SageMaker response (mMASI, class_statistics, colored_mask_b64, ...).
+    """
+    image_bytes = await _read_image_upload(image, "image")
+    do_preprocess = preprocess.lower() not in ("false", "0", "no")
+    result = await sagemaker_inference.detect_hyperpigmentation(image_bytes, preprocess=do_preprocess)
+    if not result.get("success"):
+        raise HTTPException(status_code=502, detail=f"Hyperpigmentation detection failed: {result.get('error')}")
+    return result["data"]
 
 
 def _build_results_response(clean_session_id: str, results: Dict[str, Any]) -> Dict[str, Any]:
@@ -473,7 +514,7 @@ async def get_heatmap_visualizations(session_id: str):
                     },
                 }
 
-                return await gemini_recommendation_service.generate_product_recommendations(
+                return await recommendation_service.generate_product_recommendations(
                     formatted_results,
                     user_preferences=None,
                 )
@@ -537,6 +578,14 @@ async def submit_and_analyze(
             read_and_validate(image_left, "image_left"),
             read_and_validate(image_right, "image_right"),
         )
+
+        # Kick off SageMaker detections (acne + hyperpigmentation) per angle
+        # immediately so they run concurrently with capture + analysis.
+        detection_tasks = {
+            "front": asyncio.create_task(sagemaker_inference.run_both(image_front_bytes)),
+            "left": asyncio.create_task(sagemaker_inference.run_both(image_left_bytes)),
+            "right": asyncio.create_task(sagemaker_inference.run_both(image_right_bytes)),
+        }
 
         # Always create a fresh session for this combined submit, then attach all 3 images
         session_id = await healoncal_service.create_analysis_session(user_id_str)
@@ -621,7 +670,7 @@ async def submit_and_analyze(
 
         async def gemini_task():
             try:
-                return await gemini_recommendation_service.generate_product_recommendations(
+                return await recommendation_service.generate_product_recommendations(
                     formatted_results,
                     user_preferences=None,
                 )
@@ -629,9 +678,12 @@ async def submit_and_analyze(
                 logger.error(f"[HEALONCAL SUBMIT-AND-ANALYZE] Gemini recommendations failed: {rec_err}")
                 return {"success": False, "error": str(rec_err)}
 
-        heatmaps_payload, recommendations = await asyncio.gather(
+        heatmaps_payload, recommendations, det_front, det_left, det_right = await asyncio.gather(
             fetch_heatmaps_task(),
             gemini_task(),
+            detection_tasks["front"],
+            detection_tasks["left"],
+            detection_tasks["right"],
         )
 
         return {
@@ -640,6 +692,11 @@ async def submit_and_analyze(
             "results": response_results,
             "heatmaps": heatmaps_payload,
             "recommendations": recommendations,
+            "detections": {
+                "front": det_front,
+                "left": det_left,
+                "right": det_right,
+            },
             "analysis": {
                 "success": True,
                 "processed_images": analysis_result.get("processed_images", 0),
@@ -701,6 +758,14 @@ async def submit_and_analyze_stream(
     )
 
     async def event_stream():
+        # Fire SageMaker detections in parallel with capture + analysis so they
+        # arrive with the earliest results rather than serialising latency.
+        detection_tasks: Dict[str, asyncio.Task] = {
+            "front": asyncio.create_task(sagemaker_inference.run_both(image_front_bytes)),
+            "left": asyncio.create_task(sagemaker_inference.run_both(image_left_bytes)),
+            "right": asyncio.create_task(sagemaker_inference.run_both(image_right_bytes)),
+        }
+        detections_by_angle: Dict[str, Dict[str, Any]] = {}
         try:
             yield _sse("progress", {"stage": "validating"})
 
@@ -809,7 +874,7 @@ async def submit_and_analyze_stream(
             if include_recs:
                 async def _gemini():
                     try:
-                        return await gemini_recommendation_service.generate_product_recommendations(
+                        return await recommendation_service.generate_product_recommendations(
                             formatted_results, user_preferences=None
                         )
                     except Exception as rec_err:
@@ -826,6 +891,9 @@ async def submit_and_analyze_stream(
             }
             if gemini_task:
                 pending[gemini_task] = "recommendations"
+            # Add SageMaker detection tasks — they'll finish whenever ready.
+            for angle, t in detection_tasks.items():
+                pending[t] = f"detection:{angle}"
 
             final_heatmaps = {
                 "success": True,
@@ -855,6 +923,13 @@ async def submit_and_analyze_stream(
                         yield _sse("heatmap_angle", payload)
                     elif kind == "recommendations":
                         yield _sse("recommendations", {"recommendations": value})
+                    elif isinstance(kind, str) and kind.startswith("detection:"):
+                        angle = kind.split(":", 1)[1]
+                        detections_by_angle[angle] = value or {
+                            "acne": {"success": False, "error": "task failed"},
+                            "hyperpigmentation": {"success": False, "error": "task failed"},
+                        }
+                        yield _sse("detection_angle", {"angle": angle, "detection": detections_by_angle[angle]})
 
             # Emit a consolidated `heatmaps` event too so clients that only know
             # the v1 shape still get the full payload without a refetch.
@@ -863,6 +938,9 @@ async def submit_and_analyze_stream(
                 for a in final_heatmaps["images"].values()
             )
             yield _sse("heatmaps", {"heatmaps": final_heatmaps})
+
+            # Consolidated detections event for clients that only see the final payload.
+            yield _sse("detections", {"detections": detections_by_angle})
 
             yield _sse("done", {
                 "session_id": clean_session_id,
@@ -1238,7 +1316,7 @@ async def get_product_recommendations(request: RecommendationRequest):
         }
         
         # Generate recommendations using Gemini AI
-        recommendations = await gemini_recommendation_service.generate_product_recommendations(
+        recommendations = await recommendation_service.generate_product_recommendations(
             formatted_results, 
             request.user_preferences
         )
@@ -1388,7 +1466,7 @@ async def complete_analysis(request: CompleteAnalysisRequest):
                             "combined_analysis": results.get("combined_results"),
                         },
                     }
-                    recs = await gemini_recommendation_service.generate_product_recommendations(
+                    recs = await recommendation_service.generate_product_recommendations(
                         formatted, None
                     )
                     # Emit a single text chunk so the UI can show something as recs are ready.
